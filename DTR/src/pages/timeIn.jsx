@@ -8,8 +8,12 @@ export default function TimeIn() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
 
+  const recognizedNameRef = useRef(null);
+  const faceStableCounter = useRef(0);
+  const processingRef = useRef(false);
+
   const [status, setStatus] = useState("Initializing...");
-  const [faceDetected, setFaceDetected] = useState(false);
+  const [recognizedName, setRecognizedName] = useState(null);
 
   /* ================= FACE DETECTION ================= */
   useEffect(() => {
@@ -20,12 +24,14 @@ export default function TimeIn() {
 
     faceDetection.setOptions({
       model: "short",
-      minDetectionConfidence: 0.6,
+      minDetectionConfidence: 0.4, // faster
     });
 
     faceDetection.onResults((results) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
+      if (!video || !canvas) return;
+
       const ctx = canvas.getContext("2d");
 
       canvas.width = video.videoWidth;
@@ -34,7 +40,7 @@ export default function TimeIn() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       if (results.detections.length > 0) {
-        setFaceDetected(true);
+        faceStableCounter.current++;
 
         const bbox = results.detections[0].boundingBox;
 
@@ -43,11 +49,24 @@ export default function TimeIn() {
         const width = bbox.width * canvas.width;
         const height = bbox.height * canvas.height;
 
+        // Draw green box
         ctx.strokeStyle = "#22c55e";
-        ctx.lineWidth = 4;
+        ctx.lineWidth = 3;
         ctx.strokeRect(x, y, width, height);
+
+        // Draw name
+        if (recognizedNameRef.current) {
+          const textY = y > 30 ? y - 10 : y + height + 25;
+
+          ctx.fillStyle = "#22c55e";
+          ctx.font = "16px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText(recognizedNameRef.current, x + width / 2, textY);
+        }
       } else {
-        setFaceDetected(false);
+        faceStableCounter.current = 0;
+        recognizedNameRef.current = null;
+        setRecognizedName(null);
       }
     });
 
@@ -55,11 +74,45 @@ export default function TimeIn() {
       onFrame: async () => {
         await faceDetection.send({ image: videoRef.current });
       },
-      width: 640,
-      height: 480,
+      width: 320, // 🔥 lower resolution for speed
+      height: 240,
     });
 
     camera.start();
+  }, []);
+
+  /* ================= AUTO RECOGNITION ================= */
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (
+        faceStableCounter.current < 3 || // require stable face
+        processingRef.current
+      )
+        return;
+
+      try {
+        processingRef.current = true;
+
+        const image = captureImage();
+        const result = await recognizeFace(image);
+
+        if (result.match) {
+          recognizedNameRef.current = result.name;
+          setRecognizedName(result.name);
+          setStatus(`Recognized: ${result.name} ✅`);
+        } else {
+          recognizedNameRef.current = null;
+          setRecognizedName(null);
+          setStatus("Unknown Face ❌");
+        }
+      } catch (error) {
+        console.error(error);
+      } finally {
+        processingRef.current = false;
+      }
+    }, 1000); // 🔥 check every 1 second
+
+    return () => clearInterval(interval);
   }, []);
 
   /* ================= CAPTURE IMAGE ================= */
@@ -74,34 +127,30 @@ export default function TimeIn() {
     return canvas.toDataURL("image/jpeg");
   };
 
-  /* ================= RECOGNIZE ================= */
-  const handleRecognize = async () => {
-    if (!faceDetected) {
-      setStatus("No face detected ❌");
+  /* ================= CONFIRM ATTENDANCE ================= */
+  const handleAttendance = async () => {
+    if (!recognizedName) {
+      setStatus("No recognized user ❌");
       return;
     }
 
     try {
-      setStatus("Recognizing...");
+      const attendance = await recordAttendance(recognizedName);
 
-      const image = captureImage();
-      const result = await recognizeFace(image);
-
-      if (result.match) {
-        const attendance = await recordAttendance(result.name);
-        setStatus(attendance.message);
-      } else {
-        setStatus("Unknown Face ❌");
-      }
+      setStatus(
+        `${recognizedName} - ${attendance.type} at ${
+          attendance.time_in || attendance.time_out
+        } ✅`,
+      );
     } catch (error) {
       console.error(error);
-      setStatus("Recognition failed ❌");
+      setStatus("Attendance failed ❌");
     }
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center">
-      <h1 className="text-2xl font-bold mb-4">Time In / Time Out</h1>
+      <h1 className="text-2xl font-bold mb-4">Smart Time In / Time Out</h1>
 
       <p className="mb-4 text-gray-600">{status}</p>
 
@@ -117,10 +166,10 @@ export default function TimeIn() {
       </div>
 
       <button
-        onClick={handleRecognize}
+        onClick={handleAttendance}
         className="px-6 py-3 bg-blue-600 text-white rounded-xl mt-4"
       >
-        Scan Face
+        Confirm Attendance
       </button>
     </div>
   );
