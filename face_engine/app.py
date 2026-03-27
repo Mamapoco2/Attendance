@@ -6,10 +6,8 @@ import base64
 import cv2
 import logging
 import hashlib
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor
 
-# ── Logging ──────────────────────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -18,9 +16,6 @@ app = Flask(__name__)
 app.config["CACHE_TYPE"] = "SimpleCache"
 app.config["CACHE_DEFAULT_TIMEOUT"] = 300
 cache = Cache(app)
-
-# Thread pool for CPU-bound face encoding (avoids GIL contention on I/O overlap)
-executor = ThreadPoolExecutor(max_workers=4)
 
 # ── Image decoding ────────────────────────────────────────────────────────────
 def decode_image(image_data: str) -> np.ndarray:
@@ -51,7 +46,11 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 
     if max(h, w) > max_dim:
         scale = max_dim / max(h, w)
-        image = cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        image = cv2.resize(
+            image,
+            (int(w * scale), int(h * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
 
     return image
 
@@ -60,16 +59,19 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 def get_face_encoding(image: np.ndarray) -> np.ndarray | None:
     """
     Return the first face encoding found, or None.
-    Uses HOG model (faster, good enough for a server).
-    Uses 1 upsampling pass — sufficient for reasonably-sized faces.
+    Uses HOG model (fast, server-friendly).
     """
     small = preprocess_image(image)
-    locations = face_recognition.face_locations(small, number_of_times_to_upsample=1, model="hog")
+    locations = face_recognition.face_locations(
+        small, number_of_times_to_upsample=1, model="hog"
+    )
 
     if not locations:
         return None
 
-    encodings = face_recognition.face_encodings(small, known_face_locations=locations, num_jitters=1)
+    encodings = face_recognition.face_encodings(
+        small, known_face_locations=locations, num_jitters=1
+    )
     return encodings[0] if encodings else None
 
 
@@ -78,21 +80,32 @@ def image_hash(image_data: str) -> str:
     return hashlib.sha256(image_data.encode()).hexdigest()
 
 
-@lru_cache(maxsize=256)
-def _cached_encoding(image_hash_key: str, image_data: str):
+def encode_image_cached(image_data: str):
     """
-    LRU cache so the same image (same hash) is never encoded twice
-    within the process lifetime. Useful when the frontend re-sends
-    the same frame across rapid polling intervals.
+    Cache face encodings by image hash so the same frame is never
+    re-encoded. Uses flask_caching (SimpleCache in dev, swap for
+    RedisCache in production for multi-worker setups).
+
+    FIX vs original: the old lru_cache approach keyed on BOTH the hash
+    string AND the full base64 image_data string, doubling memory usage.
+    This version keys only on the compact SHA-256 hash.
     """
+    key = f"enc:{image_hash(image_data)}"
+    cached = cache.get(key)
+
+    if cached is not None:
+        # None stored as a sentinel means "no face found"
+        return cached if cached != "__no_face__" else None
+
     image = decode_image(image_data)
     encoding = get_face_encoding(image)
-    return encoding.tolist() if encoding is not None else None
 
-
-def encode_image_cached(image_data: str):
-    key = image_hash(image_data)
-    return _cached_encoding(key, image_data)
+    if encoding is not None:
+        cache.set(key, encoding.tolist())
+        return encoding.tolist()
+    else:
+        cache.set(key, "__no_face__")
+        return None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -144,7 +157,9 @@ def recognize():
     # Validate known_faces structure up front
     for i, face in enumerate(known_faces):
         if not isinstance(face.get("encoding"), list) or not face.get("name"):
-            return jsonify({"error": f"known_faces[{i}] is missing 'name' or 'encoding'."}), 422
+            return jsonify(
+                {"error": f"known_faces[{i}] is missing 'name' or 'encoding'."}
+            ), 422
 
     try:
         encoding = encode_image_cached(image_data)
@@ -159,7 +174,7 @@ def recognize():
 
     unknown_enc = np.array(encoding)
 
-    # Vectorized batch comparison — avoids a Python loop entirely
+    # Vectorised batch comparison — avoids a Python loop entirely
     known_encs = np.array([face["encoding"] for face in known_faces])
     distances = face_recognition.face_distance(known_encs, unknown_enc)
 
@@ -170,7 +185,11 @@ def recognize():
     if best_dist <= TOLERANCE:
         matched_name = known_faces[best_idx]["name"]
         log.info("Recognized '%s' (distance=%.4f)", matched_name, best_dist)
-        return jsonify({"match": True, "name": matched_name, "confidence": round(1 - best_dist, 4)})
+        return jsonify({
+            "match": True,
+            "name": matched_name,
+            "confidence": round(1 - best_dist, 4),
+        })
 
     log.info("No match found (best distance=%.4f)", best_dist)
     return jsonify({"match": False})
@@ -199,5 +218,5 @@ def internal_error(_):
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Use threaded=True so multiple camera frames can be processed concurrently.
-    # In production, replace with: gunicorn -w 2 -k gthread --threads 4 app:app
+    # In production: gunicorn -w 2 -k gthread --threads 4 app:app
     app.run(port=5001, threaded=True, debug=False)
