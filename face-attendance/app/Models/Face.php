@@ -6,5 +6,5 @@ use Illuminate\Database\Eloquent\Model;
 
 class Face extends Model
 {
-    protected $fillable = ['name', 'encoding'];
+    protected $fillable = ['name', 'employee_number', 'encoding', 'image'];
 }

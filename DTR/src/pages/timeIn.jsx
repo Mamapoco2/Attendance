@@ -361,7 +361,8 @@ export default function TimeIn() {
     try {
       setStatus("Recording attendance…");
       setStatusType("scanning");
-      const attendance = await recordAttendance(recognizedName);
+      const image = captureImage();
+      const attendance = await recordAttendance(recognizedName, image);
       setStatus(
         `${attendance.type} recorded at ${attendance.time_in || attendance.time_out}`,
       );

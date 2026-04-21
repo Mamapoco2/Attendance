@@ -2,6 +2,7 @@ import { Routes, Route, Link, useLocation } from "react-router-dom";
 import FaceRegister from "./pages/register";
 import FaceRecognize from "./pages/timeIn";
 import ViewDTR from "./pages/viewDTR";
+import EmployeeDtr from "./pages/employeeDtr";
 
 export default function App() {
   const location = useLocation();
@@ -177,6 +178,44 @@ export default function App() {
             </svg>
             Register Staff
           </Link>
+
+          <Link
+            to="/dtr"
+            className={`nav-link ${location.pathname === "/dtr" ? "active" : ""}`}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+            Records
+          </Link>
+
+          <Link
+            to="/employee-dtr"
+            className={`nav-link ${location.pathname === "/employee-dtr" ? "active" : ""}`}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            DTR Form
+          </Link>
         </div>
 
         {/* Right side */}
@@ -189,6 +228,7 @@ export default function App() {
         <Route path="/register" element={<FaceRegister />} />
         <Route path="/recognize" element={<FaceRecognize />} />
         <Route path="/dtr" element={<ViewDTR />} />
+        <Route path="/employee-dtr" element={<EmployeeDtr />} />
         <Route path="*" element={<FaceRecognize />} />
       </Routes>
     </div>

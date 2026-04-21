@@ -8,6 +8,7 @@ export default function FaceRegister() {
   const canvasRef = useRef(null);
 
   const [name, setName] = useState("");
+  const [employeeNumber, setEmployeeNumber] = useState("");
   const [status, setStatus] = useState("Position your face in the frame");
   const [statusType, setStatusType] = useState("idle");
   const [faceDetected, setFaceDetected] = useState(false);
@@ -124,15 +125,21 @@ export default function FaceRegister() {
       setStatusType("error");
       return;
     }
+    if (!employeeNumber.trim()) {
+      setStatus("Please enter an employee number");
+      setStatusType("error");
+      return;
+    }
     try {
       setLoading(true);
       setStatus("Registering face…");
       setStatusType("scanning");
       const image = captureImage();
-      await registerFace(name, image);
+      await registerFace(name, employeeNumber, image);
       setStatus(`"${name}" registered successfully`);
       setStatusType("success");
       setName("");
+      setEmployeeNumber("");
     } catch (error) {
       console.error(error);
       setStatus("Registration failed — please try again");
@@ -690,11 +697,26 @@ export default function FaceRegister() {
               />
             </div>
 
+            <div className="input-wrap" style={{ marginTop: 10 }}>
+              <label className="input-label">Employee Number</label>
+              <span className="input-icon">#</span>
+              <input
+                type="text"
+                className="name-input"
+                placeholder="e.g. EMP-0001"
+                value={employeeNumber}
+                onChange={(e) => setEmployeeNumber(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleRegister()}
+              />
+            </div>
+
             {/* Register button */}
             <button
               className="register-btn"
               onClick={handleRegister}
-              disabled={loading || !faceDetected || !name.trim()}
+              disabled={
+                loading || !faceDetected || !name.trim() || !employeeNumber.trim()
+              }
             >
               {loading ? (
                 <>
