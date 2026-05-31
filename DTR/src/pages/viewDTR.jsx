@@ -6,6 +6,8 @@ export default function ViewDTR() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   useEffect(() => {
     const fetchRecords = async () => {
@@ -26,9 +28,23 @@ export default function ViewDTR() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return records;
-    return records.filter((record) => record.name.toLowerCase().includes(q));
-  }, [records, search]);
+    return records.filter((record) => {
+      const matchesName = !q || record.name.toLowerCase().includes(q);
+      const recordDate = record.date ? new Date(record.date) : null;
+      const fromDate = dateFrom ? new Date(dateFrom) : null;
+      const toDate = dateTo ? new Date(dateTo) : null;
+
+      if (toDate) {
+        // Make end-date inclusive for the whole day.
+        toDate.setHours(23, 59, 59, 999);
+      }
+
+      const matchesFrom = !fromDate || (recordDate && recordDate >= fromDate);
+      const matchesTo = !toDate || (recordDate && recordDate <= toDate);
+
+      return matchesName && matchesFrom && matchesTo;
+    });
+  }, [records, search, dateFrom, dateTo]);
 
   return (
     <div style={{ padding: 24 }}>
@@ -51,6 +67,27 @@ export default function ViewDTR() {
           borderRadius: 8,
         }}
       />
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          marginBottom: 16,
+        }}
+      >
+        <input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          style={dateInputStyle}
+        />
+        <input
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          style={dateInputStyle}
+        />
+      </div>
 
       {loading && <div>Loading records...</div>}
       {error && <div style={{ color: "#dc2626" }}>{error}</div>}
@@ -142,4 +179,12 @@ const photoStyle = {
   objectFit: "cover",
   borderRadius: 12,
   border: "1px solid #e2e8f0",
+};
+
+const dateInputStyle = {
+  width: "100%",
+  maxWidth: 220,
+  padding: "10px 12px",
+  border: "1px solid #d1d5db",
+  borderRadius: 8,
 };

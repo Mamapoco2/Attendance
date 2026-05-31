@@ -63,8 +63,10 @@ class FaceController extends Controller
     $face = Face::where('name', $name)->first();
     $employeeNumber = $face?->employee_number;
 
-    $today = Carbon::today()->toDateString();
-    $now = Carbon::now()->format('H:i:s');
+    $timezone = config('app.timezone', 'Asia/Manila');
+    $now = Carbon::now($timezone);
+    $today = $now->toDateString();
+    $currentTime = $now->format('H:i:s');
 
     $attendance = Attendance::where('name', $name)
         ->where('date', $today)
@@ -76,7 +78,7 @@ class FaceController extends Controller
             'name' => $name,
             'employee_number' => $employeeNumber,
             'date' => $today,
-            'time_in' => $now,
+            'time_in' => $currentTime,
             'image' => $image,
             'time_in_image' => $image
         ]);
@@ -85,14 +87,14 @@ class FaceController extends Controller
             'type' => 'TIME_IN',
             'time_in' => $created->time_in,
             'time_out' => $created->time_out,
-            'message' => "Time In recorded at $now"
+            'message' => "Time In recorded at $currentTime"
         ]);
     }
 
     if ($attendance->time_in && !$attendance->time_out) {
         // TIME OUT
         $attendance->update([
-            'time_out' => $now,
+            'time_out' => $currentTime,
             'image' => $image ?: $attendance->image,
             'time_out_image' => $image
         ]);
@@ -101,7 +103,7 @@ class FaceController extends Controller
             'type' => 'TIME_OUT',
             'time_in' => $attendance->time_in,
             'time_out' => $attendance->time_out,
-            'message' => "Time Out recorded at $now"
+            'message' => "Time Out recorded at $currentTime"
         ]);
     }
 
