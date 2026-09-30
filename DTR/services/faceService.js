@@ -1,31 +1,31 @@
 import { api } from "./api";
 
 /**
- * Register a new face
+ * Register a new face using multiple captured frames
  * @param {string} name
  * @param {string} employeeNumber
- * @param {string} imageBase64
+ * @param {string[]} images - array of base64 data-URLs (5-10 frames)
  */
-export const registerFace = async (name, employeeNumber, imageBase64) => {
+export const registerFace = async (name, employeeNumber, images) => {
   return api("/register-face", {
     method: "POST",
     body: JSON.stringify({
       name,
       employee_number: employeeNumber,
-      image: imageBase64,
+      images, // ← plural, matches Laravel's validation rule
     }),
   });
 };
 
 /**
- * Recognize face
- * @param {string} imageBase64
+ * Recognize a face using multiple captured frames
+ * @param {string[]} images - array of base64 data-URLs (3-5 frames)
  */
-export const recognizeFace = async (imageBase64) => {
+export const recognizeFace = async (images) => {
   return api("/recognize-face", {
     method: "POST",
     body: JSON.stringify({
-      image: imageBase64,
+      images, // ← plural, matches Laravel's validation rule
     }),
   });
 };

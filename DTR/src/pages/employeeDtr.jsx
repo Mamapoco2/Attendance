@@ -2,8 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { getEmployeeDtrCutoff } from "../../services/attendanceService";
 
 const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 const currentDate = new Date();
@@ -19,17 +29,34 @@ const currentYear = currentMonthDate.getFullYear();
 const DTR_VERIFIER_NAME = "DAVE ANTHONY A. VERGARA, MD";
 const DTR_VERIFIER_TITLE = "OIC, MEDICAL CENTER CHIEF I";
 
-const SHORT_MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const SHORT_MON = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 function ymdToLocalDate(ymd) {
   if (!ymd) return null;
   const p = String(ymd).split(/[-T]/);
-  const y = Number(p[0]), m = Number(p[1]), d = Number(p[2]);
+  const y = Number(p[0]),
+    m = Number(p[1]),
+    d = Number(p[2]);
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
 }
 
-function d2day(n) { return String(n).padStart(2, "0"); }
+function d2day(n) {
+  return String(n).padStart(2, "0");
+}
 
 function toDateInputValue(date) {
   const y = date.getFullYear();
@@ -47,10 +74,13 @@ function formatCutoffRangeDisplay(range) {
   const start = ymdToLocalDate(range.start);
   const end = ymdToLocalDate(range.end);
   if (!start || !end) return "";
-  const y1 = start.getFullYear(), y2 = end.getFullYear();
-  const m1 = start.getMonth(), m2 = end.getMonth();
+  const y1 = start.getFullYear(),
+    y2 = end.getFullYear();
+  const m1 = start.getMonth(),
+    m2 = end.getMonth();
   if (y1 === y2) {
-    if (m1 === m2) return `${SHORT_MON[m1]} ${d2day(start.getDate())} - ${d2day(end.getDate())}, ${y1}`;
+    if (m1 === m2)
+      return `${SHORT_MON[m1]} ${d2day(start.getDate())} - ${d2day(end.getDate())}, ${y1}`;
     return `${SHORT_MON[m1]} ${d2day(start.getDate())} - ${SHORT_MON[m2]} ${d2day(end.getDate())}, ${y1}`;
   }
   return `${SHORT_MON[m1]} ${d2day(start.getDate())}, ${y1} - ${SHORT_MON[m2]} ${d2day(end.getDate())}, ${y2}`;
@@ -58,32 +88,73 @@ function formatCutoffRangeDisplay(range) {
 
 function formatDateRange(range) {
   if (!range?.start || !range?.end) return "MM/DD/YYYY - MM/DD/YYYY";
-  const start = new Date(range.start), end = new Date(range.end);
-  const s = `${String(start.getMonth()+1).padStart(2,"0")}/${String(start.getDate()).padStart(2,"0")}/${start.getFullYear()}`;
-  const e = `${String(end.getMonth()+1).padStart(2,"0")}/${String(end.getDate()).padStart(2,"0")}/${end.getFullYear()}`;
+  const start = new Date(range.start),
+    end = new Date(range.end);
+  const s = `${String(start.getMonth() + 1).padStart(2, "0")}/${String(start.getDate()).padStart(2, "0")}/${start.getFullYear()}`;
+  const e = `${String(end.getMonth() + 1).padStart(2, "0")}/${String(end.getDate()).padStart(2, "0")}/${end.getFullYear()}`;
   return `${s} - ${e}`;
+}
+
+function resolveDateForDay(day, range) {
+  if (!range?.start || !range?.end) return null;
+  const start = ymdToLocalDate(range.start);
+  const end = ymdToLocalDate(range.end);
+  if (!start || !end) return null;
+
+  const sameMonth =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth();
+
+  if (sameMonth) {
+    if (day < start.getDate() || day > end.getDate()) return null;
+    return new Date(start.getFullYear(), start.getMonth(), day);
+  }
+
+  // Range crosses a month boundary (e.g. 26th of one month through
+  // the 10th of the next): days >= start's day-of-month belong to
+  // the start month, days <= end's day-of-month belong to the end month.
+  if (day >= start.getDate()) {
+    return new Date(start.getFullYear(), start.getMonth(), day);
+  }
+  if (day <= end.getDate()) {
+    return new Date(end.getFullYear(), end.getMonth(), day);
+  }
+  return null;
+}
+
+function isWeekendDay(day, range) {
+  const date = resolveDateForDay(day, range);
+  if (!date) return false;
+  const dow = date.getDay();
+  return dow === 0 || dow === 6;
 }
 
 function formatDtrCellDisplay(raw) {
   if (raw == null) return "";
   let s = String(raw).trim();
   if (!s) return "";
-  const dtExtract = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/);
-  if (dtExtract) s = `${dtExtract[2]}:${dtExtract[3]}${dtExtract[4] ? `:${dtExtract[4]}` : ""}`;
+  const dtExtract = s.match(
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (dtExtract)
+    s = `${dtExtract[2]}:${dtExtract[3]}${dtExtract[4] ? `:${dtExtract[4]}` : ""}`;
   if (!/^\d{1,2}:\d{2}/.test(s)) return s.toUpperCase();
   let m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)\s*$/i);
   if (m) {
-    const h = parseInt(m[1], 10), min = m[2].padStart(2,"0"), ap = m[4].toUpperCase();
-    return `${String(h).padStart(2,"0")}:${min} ${ap}`;
+    const h = parseInt(m[1], 10),
+      min = m[2].padStart(2, "0"),
+      ap = m[4].toUpperCase();
+    return `${String(h).padStart(2, "0")}:${min} ${ap}`;
   }
   m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
   if (!m) return s;
   let h24 = parseInt(m[1], 10);
-  const min = m[2].padStart(2,"0");
+  const min = m[2].padStart(2, "0");
   if (h24 > 23) return s;
   const ap = h24 >= 12 ? "PM" : "AM";
-  let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-  return `${String(h12).padStart(2,"0")}:${min} ${ap}`;
+  let h12 = h24 % 12;
+  if (h12 === 0) h12 = 12;
+  return `${String(h12).padStart(2, "0")}:${min} ${ap}`;
 }
 
 export default function EmployeeDtr() {
@@ -93,7 +164,7 @@ export default function EmployeeDtr() {
   const [dateFrom, setDateFrom] = useState(() =>
     toDateInputValue(getCutoffDateFrom(currentMonth, currentYear)),
   );
-  const [dateTo, setDateTo] = useState("");
+  const [dateTo, setDateTo] = useState(() => toDateInputValue(new Date()));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
@@ -132,6 +203,7 @@ export default function EmployeeDtr() {
 
   useEffect(() => {
     setDateFrom(toDateInputValue(getCutoffDateFrom(month, year)));
+    setDateTo(toDateInputValue(new Date()));
   }, [month, year]);
 
   const leftEntriesByDay = useMemo(() => {
@@ -151,17 +223,28 @@ export default function EmployeeDtr() {
   }, [result, dateFrom, dateTo]);
 
   const handleLoad = async () => {
-    if (!employeeNumber.trim()) { setError("Employee number is required."); return; }
-    setError(""); setLoading(true);
+    if (!employeeNumber.trim()) {
+      setError("Employee number is required.");
+      return;
+    }
+    setError("");
+    setLoading(true);
     try {
-      const data = await getEmployeeDtrCutoff(employeeNumber.trim(), month, year);
+      const data = await getEmployeeDtrCutoff(
+        employeeNumber.trim(),
+        month,
+        year,
+      );
       setResult(data);
-      if (!data.employee) setError("No employee found for that employee number.");
+      if (!data.employee)
+        setError("No employee found for that employee number.");
     } catch (err) {
       console.error(err);
       setError("Failed to load DTR. Please try again.");
       setResult(null);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -331,18 +414,28 @@ export default function EmployeeDtr() {
       `}</style>
 
       <div className="employee-dtr-container w-full max-w-[1240px]">
-
         {/* ── Controls ── */}
         <div className="dtr-ui dtr-controls-card">
           <div className="dtr-controls-header">
             <div className="dtr-controls-icon">
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              <svg
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                />
               </svg>
             </div>
             <div>
               <div className="dtr-controls-title">Daily Time Record</div>
-              <div className="dtr-controls-sub">CS Form No. 48 — View and print employee DTR</div>
+              <div className="dtr-controls-sub">
+                CS Form No. 48 — View and print employee DTR
+              </div>
             </div>
           </div>
 
@@ -359,8 +452,16 @@ export default function EmployeeDtr() {
             </div>
             <div className="dtr-field" style={{ maxWidth: 180 }}>
               <label className="dtr-label">Month</label>
-              <select className="dtr-select" value={month} onChange={(e) => setMonth(Number(e.target.value))}>
-                {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              <select
+                className="dtr-select"
+                value={month}
+                onChange={(e) => setMonth(Number(e.target.value))}
+              >
+                {MONTHS.map((m, i) => (
+                  <option key={m} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="dtr-field" style={{ maxWidth: 120 }}>
@@ -391,28 +492,64 @@ export default function EmployeeDtr() {
               />
             </div>
             <div className="dtr-actions">
-              <button className="dtr-btn dtr-btn-primary" onClick={handleLoad} disabled={loading}>
+              <button
+                className="dtr-btn dtr-btn-primary"
+                onClick={handleLoad}
+                disabled={loading}
+              >
                 {loading ? (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} className="dtr-spin">
-                      <path d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" strokeOpacity={0.3}/>
-                      <path strokeLinecap="round" d="M21 12a9 9 0 00-9-9"/>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                      className="dtr-spin"
+                    >
+                      <path
+                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        strokeOpacity={0.3}
+                      />
+                      <path strokeLinecap="round" d="M21 12a9 9 0 00-9-9" />
                     </svg>
                     Loading…
                   </>
                 ) : (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-                      <circle cx="11" cy="11" r="8"/><path strokeLinecap="round" d="m21 21-4.35-4.35"/>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                    >
+                      <circle cx="11" cy="11" r="8" />
+                      <path strokeLinecap="round" d="m21 21-4.35-4.35" />
                     </svg>
                     View DTR
                   </>
                 )}
               </button>
-              <button className="dtr-btn dtr-btn-ghost" onClick={() => window.print()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/>
-                  <rect x="6" y="14" width="12" height="8" rx="1"/>
+              <button
+                className="dtr-btn dtr-btn-ghost"
+                onClick={() => window.print()}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"
+                  />
+                  <rect x="6" y="14" width="12" height="8" rx="1" />
                 </svg>
                 Print
               </button>
@@ -423,9 +560,16 @@ export default function EmployeeDtr() {
         {/* ── Error ── */}
         {error && (
           <div className="dtr-ui dtr-error-bar">
-            <svg width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <circle cx="12" cy="12" r="10"/>
-              <path strokeLinecap="round" d="M12 8v4m0 4h.01"/>
+            <svg
+              width="15"
+              height="15"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <circle cx="12" cy="12" r="10" />
+              <path strokeLinecap="round" d="M12 8v4m0 4h.01" />
             </svg>
             {error}
           </div>
@@ -434,49 +578,68 @@ export default function EmployeeDtr() {
         {/* ── Cutoff bar ── */}
         {result && (
           <div className="dtr-ui dtr-cutoff-bar">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+            <svg
+              width="14"
+              height="14"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
             </svg>
             <strong>Cutoff periods:</strong>
-            <span className="dtr-cutoff-range">{formatDateRange(result?.left_range)}</span>
+            <span className="dtr-cutoff-range">
+              {formatDateRange(result?.left_range)}
+            </span>
             <span className="dtr-cutoff-sep">|</span>
-            <span className="dtr-cutoff-range">{formatDateRange(result?.right_range)}</span>
+            <span className="dtr-cutoff-range">
+              {formatDateRange(result?.right_range)}
+            </span>
           </div>
         )}
 
         {/* ── Paper ── */}
         <div className="dtr-paper">
           {/* fallback cutoff text when no result yet */}
-          {!result && (
-            <div className="employee-dtr-cutoff mb-3 text-[13px] font-sans">
-              <span className="mr-1.5 font-bold">Cutoff:</span>
-              <span className="font-mono">
-                {formatDateRange(result?.left_range)} | {formatDateRange(result?.right_range)}
-              </span>
-            </div>
-          )}
 
           <div className="employee-dtr-copies grid grid-cols-2 gap-6">
-            <DtrCopy employeeName={result?.employee?.name || ""} entriesByDay={leftEntriesByDay} cutoffRange={result?.left_range} />
-            <DtrCopy employeeName={result?.employee?.name || ""} entriesByDay={rightEntriesByDay} cutoffRange={result?.right_range} />
+            <DtrCopy
+              employeeName={result?.employee?.name || ""}
+              entriesByDay={leftEntriesByDay}
+              cutoffRange={result?.left_range}
+            />
+            <DtrCopy
+              employeeName={result?.employee?.name || ""}
+              entriesByDay={rightEntriesByDay}
+              cutoffRange={result?.right_range}
+            />
           </div>
 
           {/* Shared signature — unchanged */}
           <div className='employee-dtr-shared-signature employee-dtr-form mt-8 flex w-full max-w-full flex-col items-center pt-1 text-center font-["Times New Roman",Times,serif]'>
             <div className="employee-dtr-sig-block-a flex w-full max-w-[520px] flex-col items-center">
               <div className="employee-dtr-sig-top-rule mb-1.5 w-full border-t border-black" />
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.5px]">SIGNATURE</div>
-              <div className="text-[10px] leading-[1.4]">Verified as to the prescribed office hours.</div>
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-[0.5px]">
+                SIGNATURE
+              </div>
+              <div className="text-[10px] leading-[1.4]">
+                Verified as to the prescribed office hours.
+              </div>
             </div>
             <div className="employee-dtr-sig-spacer h-10 w-full" />
             <div className="employee-dtr-sig-block-b flex w-full max-w-[520px] flex-col items-center">
               <div className="employee-dtr-sig-b-rule mb-1.5 w-full border-t border-black" />
-              <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.2px]">{DTR_VERIFIER_NAME}</div>
-              <div className="text-[10px] uppercase tracking-[0.2px]">{DTR_VERIFIER_TITLE}</div>
+              <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.2px]">
+                {DTR_VERIFIER_NAME}
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.2px]">
+                {DTR_VERIFIER_TITLE}
+              </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
@@ -485,16 +648,19 @@ export default function EmployeeDtr() {
 // ── DtrCopy — completely original, zero changes ──────────────────────────────
 function DtrCopy({ employeeName, entriesByDay, cutoffRange }) {
   const monthRangeText = formatCutoffRangeDisplay(cutoffRange) || "";
-  const dtrCellValue = (entry, rawValue) => {
-    if (!entry) return "OFF";
+  const dtrCellValue = (day, entry, rawValue) => {
+    const weekend = isWeekendDay(day, cutoffRange);
+    if (!entry) return weekend ? "OFF" : "";
     const formatted = formatDtrCellDisplay(rawValue);
-    return formatted || "OFF";
+    return formatted || (weekend ? "OFF" : "");
   };
 
   return (
     <div className="employee-dtr-copy flex flex-col items-center px-1 py-2">
       <div className='employee-dtr-copy-inner employee-dtr-form flex w-full max-w-full flex-col items-center font-["Times New Roman",Times,serif]'>
-        <div className="mb-2 w-full text-left text-[10px] font-bold leading-[1.1]">Civil Service Form No. 48</div>
+        <div className="mb-2 w-full text-left text-[10px] font-bold leading-[1.1]">
+          Civil Service Form No. 48
+        </div>
         <div className="mb-2.5 w-full text-center text-[17px] font-bold uppercase leading-[1.2] tracking-[0.5px]">
           DAILY TIME RECORD
         </div>
@@ -507,12 +673,16 @@ function DtrCopy({ employeeName, entriesByDay, cutoffRange }) {
               </span>
             </div>
           </div>
-          <div className="mt-1.5 text-[9px] font-bold uppercase tracking-[0.5px]">NAME</div>
+          <div className="mt-1.5 text-[9px] font-bold uppercase tracking-[0.5px]">
+            NAME
+          </div>
         </div>
 
-        <div className="employee-dtr-header-fields mt-1.5 w-full self-stretch">
+        <div className="employee-dtr-header-fields mt-1.5 w-full self-stretch mb-2.5">
           <div className="mb-1 flex w-full items-end justify-between gap-1">
-            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">For the month of</span>
+            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">
+              For the month of
+            </span>
             <span className="flex flex-1 items-end justify-center">
               <span className="inline-block border-b border-black pb-px text-center text-[9.5px] font-bold leading-[1.2]">
                 {monthRangeText}
@@ -520,7 +690,9 @@ function DtrCopy({ employeeName, entriesByDay, cutoffRange }) {
             </span>
           </div>
           <div className="mb-1 flex w-full items-end justify-between gap-1">
-            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">Official Hours:</span>
+            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">
+              Official Hours:
+            </span>
             <span className="flex flex-1 items-end justify-center">
               <span className="inline-block border-b border-black pb-px text-center text-[9.5px] font-bold leading-[1.2]">
                 8:00 AM - 5:00 PM
@@ -531,37 +703,67 @@ function DtrCopy({ employeeName, entriesByDay, cutoffRange }) {
             <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">
               For Arrival & Departure Days:
             </span>
-            <span className="block min-h-[18px] flex-1 border-b border-black">&nbsp;</span>
+            <span className="block min-h-[18px] flex-1 border-b border-black">
+              &nbsp;
+            </span>
           </div>
           <div className="flex w-full items-end justify-between gap-1 pl-5">
-            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">Saturdays:</span>
-            <span className="block min-h-[18px] flex-1 border-b border-black">&nbsp;</span>
+            <span className="flex-[0_0_46%] pb-px text-left text-[9.5px] font-bold leading-[1.15]">
+              Saturdays:
+            </span>
+            <span className="block min-h-[18px] flex-1 border-b border-black">
+              &nbsp;
+            </span>
           </div>
         </div>
 
         <table className="employee-dtr-grid-table mt-2 w-full border-collapse">
           <thead>
             <tr>
-              <th rowSpan={2} className="border border-black px-[2px] py-[1px] text-left text-[10px] font-bold" style={{ paddingLeft: 4 }}>
+              <th
+                rowSpan={2}
+                className="border border-black px-[2px] py-[1px] text-center text-[10px] font-bold"
+              >
                 Days
               </th>
-              <th colSpan={2} className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+              <th
+                colSpan={2}
+                className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center"
+              >
                 Morning
               </th>
-              <th colSpan={2} className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+              <th
+                colSpan={2}
+                className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center"
+              >
                 Afternoon
               </th>
-              <th colSpan={2} className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+              <th
+                colSpan={2}
+                className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center"
+              >
                 Overtime
               </th>
             </tr>
             <tr>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Arrived</th>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Departure</th>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Arrived</th>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Departure</th>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Hours</th>
-              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">Minutes</th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Arrived
+              </th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Departure
+              </th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Arrived
+              </th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Departure
+              </th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Hours
+              </th>
+              <th className="border border-black px-[2px] py-[1px] text-[10px] font-bold text-center">
+                Minutes
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -571,31 +773,36 @@ function DtrCopy({ employeeName, entriesByDay, cutoffRange }) {
               const dayLabel = String(day).padStart(2, "0");
               return (
                 <tr key={day}>
-                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px] font-bold" style={{ paddingLeft: 4 }}>
+                  <td
+                    className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px] font-bold"
+                    style={{ paddingLeft: 4 }}
+                  >
                     {dayLabel}
                   </td>
-                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">{dtrCellValue(entry, entry?.am_arrival)}</td>
-                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">{dtrCellValue(entry, entry?.am_departure)}</td>
-                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">{dtrCellValue(entry, entry?.pm_arrival)}</td>
-                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">{dtrCellValue(entry, entry?.pm_departure)}</td>
+                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">
+                    {dtrCellValue(day, entry, entry?.am_arrival)}
+                  </td>
+                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">
+                    {dtrCellValue(day, entry, entry?.am_departure)}
+                  </td>
+                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">
+                    {dtrCellValue(day, entry, entry?.pm_arrival)}
+                  </td>
+                  <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]">
+                    {dtrCellValue(day, entry, entry?.pm_departure)}
+                  </td>
                   <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]" />
                   <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]" />
                 </tr>
               );
             })}
-            <tr>
-              <td colSpan={5} className="h-4 border border-black px-[2px] py-[1px] text-right text-[10px] font-bold" style={{ paddingRight: 8 }}>
-                Total
-              </td>
-              <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]" />
-              <td className="h-4 border border-black px-[2px] py-[1px] text-center text-[10px]" />
-            </tr>
           </tbody>
         </table>
 
         <p className="mt-2.5 min-h-[34px] w-full px-0.5 text-[9px] italic leading-[1.25]">
-          I certify on my honor that the above is a true and correct report of the hours of work performed, record of which was
-          made daily at the time of arrival and departure from office.
+          I certify on my honor that the above is a true and correct report of
+          the hours of work performed, record of which was made daily at the
+          time of arrival and departure from office.
         </p>
       </div>
     </div>

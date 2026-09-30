@@ -100,6 +100,19 @@ export default function TimeIn() {
     warmCache();
   }, []);
 
+  // ── Capture N frames a few ms apart for accurate multi-frame recognition ──
+  // Backend requires an ARRAY of 3–5 images (see Laravel: min:3|max:5).
+  const captureFrames = useCallback(async (count = 3, delayMs = 150) => {
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      frames.push(captureImage());
+      if (i < count - 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    return frames;
+  }, []);
+
   // ── Recognition: fires once per face appearance after liveness passes ──────
   const attemptRecognition = useCallback(async () => {
     const ls = livenessStateRef.current;
@@ -122,9 +135,9 @@ export default function TimeIn() {
       setStatus("Verifying identity…");
       setStatusType("scanning");
 
-      const image = captureImage();
-      // Use cached known faces if available, otherwise let the service fetch
-      const result = await recognizeFace(image, knownFacesCacheRef.current);
+      // Capture multiple frames — backend expects an array (min 3, max 5)
+      const images = await captureFrames(3, 150);
+      const result = await recognizeFace(images);
 
       if (result.match) {
         recognizedNameRef.current = result.name;
@@ -150,7 +163,7 @@ export default function TimeIn() {
     } finally {
       recognitionInFlightRef.current = false;
     }
-  }, []);
+  }, [captureFrames]);
 
   // Watch for liveness becoming ok and trigger recognition immediately
   useEffect(() => {
@@ -310,7 +323,7 @@ export default function TimeIn() {
     ctx.fillRect(x, scanY - 8, w, 16);
   }
 
-  // ── New: draw challenge progress dots below the face box ──────────────────
+  // ── Draw challenge progress dots below the face box ────────────────────────
   function drawProgressDots(ctx, x, y, w, progress) {
     if (!progress || progress.total === 0) return;
     const dotR = 4;

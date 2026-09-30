@@ -6,6 +6,7 @@ import { registerFace } from "../../services/faceService";
 export default function FaceRegister() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const faceDetectedRef = useRef(false); // ← add this
 
   const [name, setName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -14,6 +15,10 @@ export default function FaceRegister() {
   const [faceDetected, setFaceDetected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    faceDetectedRef.current = faceDetected; // ← keep ref in sync with state
+  }, [faceDetected]);
 
   useEffect(() => {
     const tick = setInterval(() => setTime(new Date()), 1000);
@@ -106,12 +111,27 @@ export default function FaceRegister() {
     camera.start();
   }, []);
 
-  const captureImage = () => {
+  const FRAMES_TO_CAPTURE = 8; // between REGISTER_MIN/MAX on the backend
+  const CAPTURE_INTERVAL_MS = 250; // spread over ~2 seconds
+
+  const captureFrame = () => {
     const canvas = document.createElement("canvas");
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
     canvas.getContext("2d").drawImage(videoRef.current, 0, 0);
     return canvas.toDataURL("image/jpeg");
+  };
+
+  const captureBurst = async (count, intervalMs) => {
+    const frames = [];
+    for (let i = 0; i < count; i++) {
+      // Skip capturing if the face has dropped out of frame
+      if (faceDetectedRef.current) {
+        frames.push(captureFrame());
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    return frames;
   };
 
   const handleRegister = async () => {
@@ -132,17 +152,29 @@ export default function FaceRegister() {
     }
     try {
       setLoading(true);
-      setStatus("Registering face…");
+      setStatus("Hold still — capturing multiple angles…");
       setStatusType("scanning");
-      const image = captureImage();
-      await registerFace(name, employeeNumber, image);
+
+      const frames = await captureBurst(FRAMES_TO_CAPTURE, CAPTURE_INTERVAL_MS);
+
+      if (frames.length < 5) {
+        setStatus("Face left the frame too often — please try again");
+        setStatusType("error");
+        return;
+      }
+
+      setStatus("Registering face…");
+      await registerFace(name, employeeNumber, frames); // now sends an array
       setStatus(`"${name}" registered successfully`);
       setStatusType("success");
       setName("");
       setEmployeeNumber("");
     } catch (error) {
       console.error(error);
-      setStatus("Registration failed — please try again");
+      setStatus(
+        error?.response?.data?.error ||
+          "Registration failed — please try again",
+      );
       setStatusType("error");
     } finally {
       setLoading(false);
@@ -715,7 +747,10 @@ export default function FaceRegister() {
               className="register-btn"
               onClick={handleRegister}
               disabled={
-                loading || !faceDetected || !name.trim() || !employeeNumber.trim()
+                loading ||
+                !faceDetected ||
+                !name.trim() ||
+                !employeeNumber.trim()
               }
             >
               {loading ? (

@@ -17,6 +17,13 @@ app.config["CACHE_TYPE"] = "SimpleCache"
 app.config["CACHE_DEFAULT_TIMEOUT"] = 300
 cache = Cache(app)
 
+# ── Tunables ──────────────────────────────────────────────────────────────────
+REGISTER_MIN_IMAGES = 5
+REGISTER_MAX_IMAGES = 10
+RECOGNIZE_MIN_FRAMES = 3
+RECOGNIZE_MAX_FRAMES = 5
+TOLERANCE = 0.5
+
 # ── Image decoding ────────────────────────────────────────────────────────────
 def decode_image(image_data: str) -> np.ndarray:
     """Decode a base64 data-URL into an RGB numpy array."""
@@ -32,15 +39,11 @@ def decode_image(image_data: str) -> np.ndarray:
     if bgr is None:
         raise ValueError("cv2 could not decode the image bytes.")
 
-    # face_recognition expects RGB, not BGR
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def preprocess_image(image: np.ndarray) -> np.ndarray:
-    """
-    Downscale large images before detection — face_recognition only needs
-    enough resolution to find a face, and smaller images are much faster.
-    """
+    """Downscale large images before detection for speed."""
     h, w = image.shape[:2]
     max_dim = 640
 
@@ -57,10 +60,7 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 
 # ── Encoding helpers ──────────────────────────────────────────────────────────
 def get_face_encoding(image: np.ndarray) -> np.ndarray | None:
-    """
-    Return the first face encoding found, or None.
-    Uses HOG model (fast, server-friendly).
-    """
+    """Return the first face encoding found, or None. Uses HOG (fast, server-friendly)."""
     small = preprocess_image(image)
     locations = face_recognition.face_locations(
         small, number_of_times_to_upsample=1, model="hog"
@@ -76,25 +76,15 @@ def get_face_encoding(image: np.ndarray) -> np.ndarray | None:
 
 
 def image_hash(image_data: str) -> str:
-    """SHA-256 of the raw data-URL string — used as a cache key."""
     return hashlib.sha256(image_data.encode()).hexdigest()
 
 
 def encode_image_cached(image_data: str):
-    """
-    Cache face encodings by image hash so the same frame is never
-    re-encoded. Uses flask_caching (SimpleCache in dev, swap for
-    RedisCache in production for multi-worker setups).
-
-    FIX vs original: the old lru_cache approach keyed on BOTH the hash
-    string AND the full base64 image_data string, doubling memory usage.
-    This version keys only on the compact SHA-256 hash.
-    """
+    """Cache a single image's encoding by hash. Returns a list or None."""
     key = f"enc:{image_hash(image_data)}"
     cached = cache.get(key)
 
     if cached is not None:
-        # None stored as a sentinel means "no face found"
         return cached if cached != "__no_face__" else None
 
     image = decode_image(image_data)
@@ -108,6 +98,24 @@ def encode_image_cached(image_data: str):
         return None
 
 
+def encode_many(images: list[str]) -> list[list[float]]:
+    """
+    Encode a batch of images, skipping any frame where no face was found.
+    Returns a list of encodings (as plain lists) — may be shorter than
+    the input if some frames failed to detect a face.
+    """
+    encodings = []
+    for i, img in enumerate(images):
+        try:
+            enc = encode_image_cached(img)
+        except ValueError as e:
+            log.warning("Skipping frame %d: %s", i, e)
+            continue
+        if enc is not None:
+            encodings.append(enc)
+    return encodings
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/register", methods=["POST"])
 def register():
@@ -117,26 +125,48 @@ def register():
         return jsonify({"error": "Request body must be JSON."}), 400
 
     name = (data.get("name") or "").strip()
-    image_data = data.get("image", "")
+    images = data.get("images")
+
+    # Back-compat: allow a single 'image' too, but warn it's suboptimal
+    if not images and data.get("image"):
+        images = [data.get("image")]
 
     if not name:
         return jsonify({"error": "Field 'name' is required and cannot be blank."}), 422
-    if not image_data:
-        return jsonify({"error": "Field 'image' is required."}), 422
+    if not images or not isinstance(images, list):
+        return jsonify({"error": "Field 'images' must be a non-empty list of data-URLs."}), 422
+    if len(images) < REGISTER_MIN_IMAGES:
+        return jsonify({
+            "error": f"At least {REGISTER_MIN_IMAGES} images are required for reliable registration."
+        }), 422
+    if len(images) > REGISTER_MAX_IMAGES:
+        images = images[:REGISTER_MAX_IMAGES]
 
     try:
-        encoding = encode_image_cached(image_data)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        encodings = encode_many(images)
     except Exception:
         log.exception("Unexpected error during registration encoding")
         return jsonify({"error": "Internal error during image processing."}), 500
 
-    if encoding is None:
-        return jsonify({"error": "No face detected in the provided image."}), 400
+    if len(encodings) < 3:
+        return jsonify({
+            "error": f"Only {len(encodings)} usable face(s) found across {len(images)} images. "
+                     "Please retake with better lighting/framing."
+        }), 400
 
-    log.info("Registered face for '%s'", name)
-    return jsonify({"success": True, "name": name, "encoding": encoding})
+    # Store BOTH: the full set (for majority-vote style recognition) and the
+    # average (cheap single-vector fallback / display purposes).
+    avg_encoding = np.mean(np.array(encodings), axis=0).tolist()
+
+    log.info("Registered face for '%s' using %d/%d usable frames", name, len(encodings), len(images))
+    return jsonify({
+        "success": True,
+        "name": name,
+        "encodings": encodings,       # list of encodings, one per good frame
+        "encoding": avg_encoding,     # averaged encoding (convenience)
+        "frames_used": len(encodings),
+        "frames_submitted": len(images),
+    })
 
 
 @app.route("/recognize", methods=["POST"])
@@ -146,53 +176,88 @@ def recognize():
     if not data:
         return jsonify({"error": "Request body must be JSON."}), 400
 
-    image_data = data.get("image", "")
+    images = data.get("images")
+    if not images and data.get("image"):
+        images = [data.get("image")]  # back-compat
+
     known_faces = data.get("known_faces", [])
 
-    if not image_data:
-        return jsonify({"error": "Field 'image' is required."}), 422
+    if not images or not isinstance(images, list):
+        return jsonify({"error": "Field 'images' must be a non-empty list of data-URLs."}), 422
+    if len(images) > RECOGNIZE_MAX_FRAMES:
+        images = images[:RECOGNIZE_MAX_FRAMES]
     if not isinstance(known_faces, list) or not known_faces:
         return jsonify({"error": "Field 'known_faces' must be a non-empty list."}), 422
 
-    # Validate known_faces structure up front
+    # Each known face may have 'encoding' (single vector) or 'encodings' (list).
+    # Normalize to: [{ "name": ..., "encodings": np.ndarray of shape (k, 128) }, ...]
+    normalized_known = []
     for i, face in enumerate(known_faces):
-        if not isinstance(face.get("encoding"), list) or not face.get("name"):
+        name = face.get("name")
+        encs = face.get("encodings") or (
+            [face["encoding"]] if isinstance(face.get("encoding"), list) else None
+        )
+        if not name or not encs:
             return jsonify(
-                {"error": f"known_faces[{i}] is missing 'name' or 'encoding'."}
+                {"error": f"known_faces[{i}] is missing 'name' or 'encoding(s)'."}
             ), 422
+        normalized_known.append({"name": name, "encodings": np.array(encs)})
 
     try:
-        encoding = encode_image_cached(image_data)
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+        frame_encodings = encode_many(images)
     except Exception:
         log.exception("Unexpected error during recognition encoding")
         return jsonify({"error": "Internal error during image processing."}), 500
 
-    if encoding is None:
-        return jsonify({"error": "No face detected in the provided image."}), 400
+    if not frame_encodings:
+        return jsonify({"error": "No face detected in any of the provided frames."}), 400
 
-    unknown_enc = np.array(encoding)
+    # ── Strategy: best-distance across all frames, with majority-vote tiebreak ──
+    # For each frame, find its single best match (name + distance) among known faces.
+    frame_votes = []  # list of (name, best_distance) per frame
+    for frame_enc in frame_encodings:
+        frame_enc_np = np.array(frame_enc)
+        best_name, best_dist = None, float("inf")
+        for known in normalized_known:
+            dists = face_recognition.face_distance(known["encodings"], frame_enc_np)
+            min_dist = float(np.min(dists))
+            if min_dist < best_dist:
+                best_dist = min_dist
+                best_name = known["name"]
+        frame_votes.append((best_name, best_dist))
 
-    # Vectorised batch comparison — avoids a Python loop entirely
-    known_encs = np.array([face["encoding"] for face in known_faces])
-    distances = face_recognition.face_distance(known_encs, unknown_enc)
+    # Majority vote among frames that passed tolerance
+    passing_votes = [(n, d) for n, d in frame_votes if d <= TOLERANCE]
 
-    best_idx = int(np.argmin(distances))
-    best_dist = float(distances[best_idx])
+    if not passing_votes:
+        best_overall = min(frame_votes, key=lambda v: v[1])
+        log.info("No match found (best distance=%.4f across %d frames)", best_overall[1], len(frame_votes))
+        return jsonify({"match": False, "best_distance": round(best_overall[1], 4)})
 
-    TOLERANCE = 0.5
-    if best_dist <= TOLERANCE:
-        matched_name = known_faces[best_idx]["name"]
-        log.info("Recognized '%s' (distance=%.4f)", matched_name, best_dist)
-        return jsonify({
-            "match": True,
-            "name": matched_name,
-            "confidence": round(1 - best_dist, 4),
-        })
+    # Count votes per name; break ties by lowest average distance
+    from collections import defaultdict
+    tally = defaultdict(list)
+    for n, d in passing_votes:
+        tally[n].append(d)
 
-    log.info("No match found (best distance=%.4f)", best_dist)
-    return jsonify({"match": False})
+    matched_name = max(
+        tally.items(),
+        key=lambda item: (len(item[1]), -sum(item[1]) / len(item[1]))
+    )[0]
+    avg_dist = sum(tally[matched_name]) / len(tally[matched_name])
+    votes = len(tally[matched_name])
+
+    log.info(
+        "Recognized '%s' with %d/%d frame votes (avg distance=%.4f)",
+        matched_name, votes, len(frame_votes), avg_dist
+    )
+    return jsonify({
+        "match": True,
+        "name": matched_name,
+        "confidence": round(1 - avg_dist, 4),
+        "votes": votes,
+        "frames_used": len(frame_votes),
+    })
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
@@ -215,8 +280,5 @@ def internal_error(_):
     return jsonify({"error": "Internal server error."}), 500
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Use threaded=True so multiple camera frames can be processed concurrently.
-    # In production: gunicorn -w 2 -k gthread --threads 4 app:app
     app.run(port=5001, threaded=True, debug=False)

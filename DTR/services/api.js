@@ -1,10 +1,11 @@
-const BASE_URL = "http://localhost:8000/api";
+const BASE_URL = "/api";
 
 export const api = async (endpoint, options = {}) => {
   try {
     const response = await fetch(`${BASE_URL}${endpoint}`, {
       headers: {
         "Content-Type": "application/json",
+        Accept: "application/json",
         ...options.headers,
       },
       ...options,
