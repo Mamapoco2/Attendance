@@ -1,31 +1,18 @@
 import { api } from "./api";
 
-/**
- * Register a new face using multiple captured frames
- * @param {string} name
- * @param {string} employeeNumber
- * @param {string[]} images - array of base64 data-URLs (5-10 frames)
- */
-export const registerFace = async (name, employeeNumber, images) => {
-  return api("/register-face", {
+export const recognizeFace = (images) =>
+  api("/dtr/kiosk/recognize", {
     method: "POST",
-    body: JSON.stringify({
-      name,
-      employee_number: employeeNumber,
-      images, // ← plural, matches Laravel's validation rule
-    }),
+    body: JSON.stringify({ images }),
   });
-};
 
-/**
- * Recognize a face using multiple captured frames
- * @param {string[]} images - array of base64 data-URLs (3-5 frames)
- */
-export const recognizeFace = async (images) => {
-  return api("/recognize-face", {
+export const registerFace = (employeeNumber, images) =>
+  api("/dtr/registration", {
     method: "POST",
-    body: JSON.stringify({
-      images, // ← plural, matches Laravel's validation rule
-    }),
+    body: JSON.stringify({ employee_number: employeeNumber, images }),
   });
-};
+
+export const lookupEmployee = (employeeNumber) =>
+  api(
+    `/dtr/registration/lookup?${new URLSearchParams({ employee_number: employeeNumber })}`,
+  );

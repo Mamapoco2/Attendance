@@ -4,10 +4,8 @@ import { FaceMesh } from "@mediapipe/face_mesh";
 import { recognizeFace } from "../../services/faceService";
 import { recordAttendance } from "../../services/attendanceService";
 import { useLiveness } from "../../hooks/useLiveness";
+import AlertDialog from "../components/AlertDialog";
 
-// ── Camera quality settings ───────────────────────────────────────────────────
-// 1280x720 is a good default for a desktop PC. If detection lags on an older
-// machine, drop to 640x480.
 const CAMERA_WIDTH = 1280;
 const CAMERA_HEIGHT = 720;
 const CAMERA_FPS = 30;
@@ -18,14 +16,13 @@ export default function TimeIn() {
   const canvasRef = useRef(null);
 
   const recognizedNameRef = useRef(null);
+  const recognizedTicketRef = useRef(null);
   const faceStableCounter = useRef(0);
   const faceVisibleRef = useRef(false);
 
-  // Debounce recognition — fire once per face appearance
-  const recognitionFiredRef = useRef(false); // reset when face leaves frame
+  const recognitionFiredRef = useRef(false);
   const recognitionInFlightRef = useRef(false);
 
-  // Cache known faces so we don't re-fetch every call
   const knownFacesCacheRef = useRef(null);
 
   const livenessStateRef = useRef({
@@ -39,6 +36,7 @@ export default function TimeIn() {
   const [status, setStatus] = useState("Ready to scan");
   const [statusType, setStatusType] = useState("idle");
   const [recognizedName, setRecognizedName] = useState(null);
+  const [punchResult, setPunchResult] = useState(null);
   const [time, setTime] = useState(new Date());
 
   const {
@@ -54,7 +52,6 @@ export default function TimeIn() {
     processMeshResults,
   } = useLiveness();
 
-  // Keep ref in sync with hook state
   useEffect(() => {
     livenessStateRef.current.ok = livenessOk;
     livenessStateRef.current.rejected = livenessRejected;
@@ -62,13 +59,11 @@ export default function TimeIn() {
     livenessStateRef.current.isLockedOut = isLockedOut;
   }, [livenessOk, livenessRejected, challenge, isLockedOut]);
 
-  // Clock
   useEffect(() => {
     const tick = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(tick);
   }, []);
 
-  // Status messages
   useEffect(() => {
     if (isLockedOut) {
       setStatus(`Too many failures — locked out for ${lockoutSecondsLeft}s`);
@@ -93,11 +88,9 @@ export default function TimeIn() {
     recognizedName,
   ]);
 
-  // Pre-fetch and cache known faces on mount
   useEffect(() => {
     async function warmCache() {
       try {
-        // Adjust this import path to wherever you fetch known faces from
         const { getKnownFaces } = await import("../../services/faceService");
         knownFacesCacheRef.current = await getKnownFaces();
       } catch (e) {
@@ -157,6 +150,7 @@ export default function TimeIn() {
 
       if (result.match) {
         recognizedNameRef.current = result.name;
+        recognizedTicketRef.current = result.ticket;
         setRecognizedName(result.name);
         setStatus("Identity verified");
         setStatusType("success");
@@ -258,6 +252,7 @@ export default function TimeIn() {
           faceStableCounter.current = 0;
           faceVisibleRef.current = false;
           recognizedNameRef.current = null;
+          recognizedTicketRef.current = null;
           recognitionFiredRef.current = false; // allow fresh recognition next time
 
           const prevCooldown = livenessStateRef.current.cooldownUntil;
@@ -436,14 +431,29 @@ export default function TimeIn() {
       setStatus("Recording attendance…");
       setStatusType("scanning");
       const image = captureImage();
-      const attendance = await recordAttendance(recognizedName, image);
-      setStatus(
-        `${attendance.type} recorded at ${attendance.time_in || attendance.time_out}`,
+      const attendance = await recordAttendance(
+        recognizedTicketRef.current,
+        image,
       );
-      setStatusType("success");
+      const recorded = ["TIME_IN", "TIME_OUT"].includes(attendance.type);
+
+      setStatus(attendance.message || `${attendance.type} recorded`);
+      setStatusType(recorded ? "success" : "error");
+      setPunchResult({
+        recorded,
+        type: attendance.type,
+        name: recognizedName,
+        message: attendance.message,
+      });
+
+      // The ticket is single-use, so the next punch needs a fresh scan.
+      recognizedTicketRef.current = null;
+      recognizedNameRef.current = null;
+      recognitionFiredRef.current = false;
+      setRecognizedName(null);
     } catch (err) {
       console.error("Attendance error:", err);
-      setStatus("Failed to record attendance");
+      setStatus(err?.message || "Failed to record attendance");
       setStatusType("error");
     }
   };
@@ -650,6 +660,30 @@ export default function TimeIn() {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={Boolean(punchResult)}
+        tone={punchResult?.recorded ? "success" : "info"}
+        title={
+          punchResult?.type === "TIME_IN"
+            ? "Time In recorded"
+            : punchResult?.type === "TIME_OUT"
+              ? "Time Out recorded"
+              : "Attendance not recorded"
+        }
+        autoCloseMs={6000}
+        onClose={() => setPunchResult(null)}
+      >
+        {punchResult?.recorded ? (
+          <>
+            <strong>{punchResult.name}</strong>
+            <br />
+            {punchResult.message}
+          </>
+        ) : (
+          punchResult?.message
+        )}
+      </AlertDialog>
     </>
   );
 }

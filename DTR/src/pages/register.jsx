@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { FaceDetection } from "@mediapipe/face_detection";
 import { Camera } from "@mediapipe/camera_utils";
-import { registerFace } from "../../services/faceService";
+import { registerFace, lookupEmployee } from "../../services/faceService";
+import AlertDialog from "../components/AlertDialog";
 
 export default function FaceRegister() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const faceDetectedRef = useRef(false); // ← add this
 
-  const [name, setName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
+  const [employee, setEmployee] = useState(null);
+  const [lookupState, setLookupState] = useState("idle");
+  const [dialog, setDialog] = useState(null);
   const [status, setStatus] = useState("Position your face in the frame");
   const [statusType, setStatusType] = useState("idle");
   const [faceDetected, setFaceDetected] = useState(false);
@@ -26,6 +29,17 @@ export default function FaceRegister() {
   }, []);
 
   useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus(
+        "Camera needs HTTPS. Open this page via https:// or localhost.",
+      );
+      setStatusType("error");
+      return undefined;
+    }
+
     const faceDetection = new FaceDetection({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`,
@@ -100,16 +114,76 @@ export default function FaceRegister() {
       }
     });
 
-    const camera = new Camera(videoRef.current, {
+    let cancelled = false;
+
+    const camera = new Camera(video, {
       onFrame: async () => {
-        await faceDetection.send({ image: videoRef.current });
+        if (cancelled) return;
+        await faceDetection.send({ image: video });
       },
       width: 320,
       height: 240,
     });
 
-    camera.start();
+    const started = camera.start().catch((error) => {
+      if (cancelled) return;
+      console.error("Failed to start camera:", error);
+      setStatus(
+        error?.name === "NotReadableError"
+          ? "Camera is in use by another app or tab. Close it and reload."
+          : "Unable to access the camera. Check browser permissions.",
+      );
+      setStatusType("error");
+    });
+
+    return () => {
+      cancelled = true;
+      started.finally(() => {
+        camera.stop();
+        faceDetection.close();
+      });
+    };
   }, []);
+
+  useEffect(() => {
+    const number = employeeNumber.trim();
+    setEmployee(null);
+
+    if (!number) {
+      setLookupState("idle");
+      return undefined;
+    }
+
+    setLookupState("loading");
+    let cancelled = false;
+
+    const timer = setTimeout(async () => {
+      try {
+        const data = await lookupEmployee(number);
+        if (cancelled) return;
+
+        setEmployee(data.employee);
+        setLookupState(data.employee ? "found" : "notfound");
+
+        if (data.employee?.has_face) {
+          setDialog({
+            tone: "info",
+            title: "Already registered",
+            message: `${data.employee.name} already has a registered face. Please contact HR if it needs to be reset.`,
+          });
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error(error);
+        setLookupState("error");
+      }
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [employeeNumber]);
 
   const FRAMES_TO_CAPTURE = 8; // between REGISTER_MIN/MAX on the backend
   const CAPTURE_INTERVAL_MS = 250; // spread over ~2 seconds
@@ -135,8 +209,8 @@ export default function FaceRegister() {
   };
 
   const handleRegister = async () => {
-    if (!name.trim()) {
-      setStatus("Please enter a staff name");
+    if (!employee || employee.has_face) {
+      setStatus("Enter a valid, unregistered employee number");
       setStatusType("error");
       return;
     }
@@ -164,18 +238,27 @@ export default function FaceRegister() {
       }
 
       setStatus("Registering face…");
-      await registerFace(name, employeeNumber, frames); // now sends an array
-      setStatus(`"${name}" registered successfully`);
+      await registerFace(employeeNumber.trim(), frames);
+      setStatus(`"${employee.name}" registered successfully`);
       setStatusType("success");
-      setName("");
+      setDialog({
+        tone: "success",
+        title: "Registration successful",
+        message: `${employee.name}'s face has been registered.`,
+      });
       setEmployeeNumber("");
     } catch (error) {
       console.error(error);
-      setStatus(
-        error?.response?.data?.error ||
-          "Registration failed — please try again",
-      );
+      const message =
+        error?.message || "Registration failed — please try again";
+      setStatus(message);
       setStatusType("error");
+      setDialog({
+        tone: error?.status === 409 ? "info" : "error",
+        title:
+          error?.status === 409 ? "Already registered" : "Registration failed",
+        message,
+      });
     } finally {
       setLoading(false);
     }
@@ -188,6 +271,7 @@ export default function FaceRegister() {
     error: { color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "✕" },
   };
   const s = statusMeta[statusType];
+  const canRegister = Boolean(employee) && !employee.has_face;
 
   const timeStr = time.toLocaleTimeString("en-US", {
     hour: "2-digit",
@@ -257,27 +341,27 @@ export default function FaceRegister() {
                 <div className={`step-line ${faceDetected ? "done" : ""}`} />
                 <div className="step">
                   <div
-                    className={`step-circle ${name.trim() ? "done" : faceDetected ? "active" : "pending"}`}
+                    className={`step-circle ${canRegister ? "done" : faceDetected ? "active" : "pending"}`}
                   >
-                    {name.trim() ? "✓" : "2"}
+                    {canRegister ? "✓" : "2"}
                   </div>
                   <span
-                    className={`step-label ${name.trim() ? "done" : faceDetected ? "active" : ""}`}
+                    className={`step-label ${canRegister ? "done" : faceDetected ? "active" : ""}`}
                   >
-                    Name
+                    Employee
                   </span>
                 </div>
                 <div
-                  className={`step-line ${name.trim() && faceDetected ? "done" : ""}`}
+                  className={`step-line ${canRegister && faceDetected ? "done" : ""}`}
                 />
                 <div className="step">
                   <div
-                    className={`step-circle ${statusType === "success" ? "done" : name.trim() && faceDetected ? "active" : "pending"}`}
+                    className={`step-circle ${statusType === "success" ? "done" : canRegister && faceDetected ? "active" : "pending"}`}
                   >
                     {statusType === "success" ? "✓" : "3"}
                   </div>
                   <span
-                    className={`step-label ${statusType === "success" ? "done" : name.trim() && faceDetected ? "active" : ""}`}
+                    className={`step-label ${statusType === "success" ? "done" : canRegister && faceDetected ? "active" : ""}`}
                   >
                     Register
                   </span>
@@ -321,21 +405,7 @@ export default function FaceRegister() {
             <div className="col-side">
               <div className="section-label">Staff Details</div>
 
-              {/* Name input */}
               <div className="input-wrap">
-                <label className="input-label">Full Name</label>
-                <span className="input-icon">👤</span>
-                <input
-                  type="text"
-                  className="name-input"
-                  placeholder="e.g. Dr. Maria Santos"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleRegister()}
-                />
-              </div>
-
-              <div className="input-wrap" style={{ marginTop: 10 }}>
                 <label className="input-label">Employee Number</label>
                 <span className="input-icon">#</span>
                 <input
@@ -348,16 +418,34 @@ export default function FaceRegister() {
                 />
               </div>
 
+              <div className="input-wrap" style={{ marginTop: 10 }}>
+                <label className="input-label">Full Name</label>
+                <span className="input-icon">👤</span>
+                <input
+                  type="text"
+                  className="name-input"
+                  placeholder="Filled in from the employee number"
+                  value={employee?.name ?? ""}
+                  readOnly
+                  tabIndex={-1}
+                />
+              </div>
+              {lookupState === "notfound" && (
+                <div className="input-hint" style={{ color: "#dc2626" }}>
+                  No employee found for that employee number.
+                </div>
+              )}
+              {lookupState === "error" && (
+                <div className="input-hint" style={{ color: "#dc2626" }}>
+                  Could not look up the employee. Please try again.
+                </div>
+              )}
+
               {/* Register button */}
               <button
                 className="register-btn"
                 onClick={handleRegister}
-                disabled={
-                  loading ||
-                  !faceDetected ||
-                  !name.trim() ||
-                  !employeeNumber.trim()
-                }
+                disabled={loading || !faceDetected || !canRegister}
               >
                 {loading ? (
                   <>
@@ -389,6 +477,15 @@ export default function FaceRegister() {
           </div>
         </div>
       </div>
+
+      <AlertDialog
+        open={Boolean(dialog)}
+        tone={dialog?.tone}
+        title={dialog?.title}
+        onClose={() => setDialog(null)}
+      >
+        {dialog?.message}
+      </AlertDialog>
     </>
   );
 }

@@ -1,24 +1,57 @@
-const BASE_URL = "/api";
+export const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
-export const api = async (endpoint, options = {}) => {
-  try {
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...options.headers,
-      },
-      ...options,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || "API Error");
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error("API ERROR:", error);
-    throw error;
+export class ApiError extends Error {
+  constructor(message, status, data = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
   }
-};
+}
+
+export async function api(endpoint, options = {}) {
+  const headers = {
+    Accept: "application/json",
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
+    ...options.headers,
+  };
+
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${endpoint}`, { ...options, headers });
+  } catch {
+    throw new ApiError(
+      "Cannot reach the server. Check your network connection.",
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new ApiError(
+      data?.message || `Request failed (${response.status})`,
+      response.status,
+      data,
+    );
+  }
+
+  return response.json();
+}
+
+export async function apiBlob(endpoint, options = {}) {
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${endpoint}`, options);
+  } catch {
+    throw new ApiError(
+      "Cannot reach the server. Check your network connection.",
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    throw new ApiError(`Request failed (${response.status})`, response.status);
+  }
+
+  return response.blob();
+}

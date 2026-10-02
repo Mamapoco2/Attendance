@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { getAttendanceRecords } from "../../services/attendanceService";
+import AuthImage from "../components/AuthImage";
+
+function formatTime12h(value) {
+  if (!value) return "";
+  const match = String(value).match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return String(value);
+  const hours = Number(match[1]);
+  if (hours > 23) return String(value);
+  const suffix = hours >= 12 ? "PM" : "AM";
+  return `${String(hours % 12 || 12).padStart(2, "0")}:${match[2]} ${suffix}`;
+}
 
 export default function ViewDTR() {
   const [records, setRecords] = useState([]);
@@ -13,18 +24,21 @@ export default function ViewDTR() {
     const fetchRecords = async () => {
       try {
         setLoading(true);
-        const data = await getAttendanceRecords();
+        const data = await getAttendanceRecords({
+          from: dateFrom,
+          to: dateTo,
+        });
         setRecords(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error(err);
-        setError("Failed to load attendance records");
+        setError(err?.message || "Failed to load attendance records");
       } finally {
         setLoading(false);
       }
     };
 
     fetchRecords();
-  }, []);
+  }, [dateFrom, dateTo]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -35,7 +49,6 @@ export default function ViewDTR() {
       const toDate = dateTo ? new Date(dateTo) : null;
 
       if (toDate) {
-        // Make end-date inclusive for the whole day.
         toDate.setHours(23, 59, 59, 999);
       }
 
@@ -116,11 +129,14 @@ export default function ViewDTR() {
                 <tr key={record.id}>
                   <td style={tdStyle}>{record.name}</td>
                   <td style={tdStyle}>{record.date}</td>
-                  <td style={tdStyle}>{record.time_in || "-"}</td>
                   <td style={tdStyle}>
-                    {record.time_in_image ? (
-                      <img
-                        src={record.time_in_image}
+                    {formatTime12h(record.time_in) || "-"}
+                  </td>
+                  <td style={tdStyle}>
+                    {record.has_time_in_image ? (
+                      <AuthImage
+                        attendanceId={record.id}
+                        type="in"
                         alt={`${record.name} time in`}
                         style={photoStyle}
                       />
@@ -128,11 +144,14 @@ export default function ViewDTR() {
                       <span style={{ color: "#94a3b8" }}>No image</span>
                     )}
                   </td>
-                  <td style={tdStyle}>{record.time_out || "-"}</td>
                   <td style={tdStyle}>
-                    {record.time_out_image ? (
-                      <img
-                        src={record.time_out_image}
+                    {formatTime12h(record.time_out) || "-"}
+                  </td>
+                  <td style={tdStyle}>
+                    {record.has_time_out_image ? (
+                      <AuthImage
+                        attendanceId={record.id}
+                        type="out"
                         alt={`${record.name} time out`}
                         style={photoStyle}
                       />

@@ -26,9 +26,6 @@ const currentMonthDate = new Date(
 const currentMonth = currentMonthDate.getMonth() + 1;
 const currentYear = currentMonthDate.getFullYear();
 
-const DTR_VERIFIER_NAME = "DAVE ANTHONY A. VERGARA, MD";
-const DTR_VERIFIER_TITLE = "CITY GOVERNMENT DEPARTMENT HEAD III";
-
 const SHORT_MON = [
   "Jan",
   "Feb",
@@ -668,11 +665,11 @@ export default function EmployeeDtr() {
             <div className="employee-dtr-sig-spacer h-10 w-full" />
             <div className="employee-dtr-sig-block-b flex w-full max-w-[250px] flex-col items-center">
               <div className="employee-dtr-sig-b-rule mb-1.5 w-full border-t border-black" />
-              <div className="mt-1 text-[11px] font-bold uppercase tracking-[0.2px]">
-                {DTR_VERIFIER_NAME}
+              <div className="mt-1 min-h-[14px] text-[11px] font-bold uppercase tracking-[0.2px]">
+                {result?.verifier?.name}
               </div>
-              <div className="text-[11px] uppercase tracking-[0.2px]">
-                {DTR_VERIFIER_TITLE}
+              <div className="min-h-[14px] text-[11px] uppercase tracking-[0.2px]">
+                {result?.verifier?.position}
               </div>
             </div>
           </div>

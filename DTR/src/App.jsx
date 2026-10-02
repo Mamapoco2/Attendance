@@ -1,7 +1,6 @@
 import { Routes, Route, Link, useLocation } from "react-router-dom";
 import FaceRegister from "./pages/register";
 import FaceRecognize from "./pages/timeIn";
-import ViewDTR from "./pages/viewDTR";
 import EmployeeDtr from "./pages/employeeDtr";
 
 const NAV = [
@@ -25,17 +24,6 @@ const NAV = [
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
         <path d="M19 8v6M22 11h-6" />
-      </>
-    ),
-  },
-  {
-    to: "/dtr",
-    label: "Attendance Log",
-    hint: "All records",
-    icon: (
-      <>
-        <rect x="3" y="4" width="18" height="18" rx="2" />
-        <path d="M16 2v4M8 2v4M3 10h18" />
       </>
     ),
   },
@@ -117,7 +105,6 @@ export default function App() {
         <Routes>
           <Route path="/register" element={<FaceRegister />} />
           <Route path="/recognize" element={<FaceRecognize />} />
-          <Route path="/dtr" element={<ViewDTR />} />
           <Route path="/employee-dtr" element={<EmployeeDtr />} />
           <Route path="*" element={<FaceRecognize />} />
         </Routes>

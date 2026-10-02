@@ -1,32 +1,27 @@
 import { api } from "./api";
 
-export const recordAttendance = async (name, image) => {
-  return api("/attendance", {
+export const recordAttendance = (ticket, image) =>
+  api("/dtr/kiosk/punch", {
     method: "POST",
-    body: JSON.stringify({ name, image }),
+    body: JSON.stringify({ ticket, image }),
   });
-};
 
-export const getAttendanceRecords = async () => {
-  return api("/attendance-records");
-};
-
-export const getEmployeeDtr = async (employeeNumber, month, year) => {
+export const getEmployeeDtrCutoff = (employeeNumber, month, year) => {
   const params = new URLSearchParams({
-    employee_number: employeeNumber,
     month: String(month),
     year: String(year),
   });
-
-  return api(`/employee-dtr?${params.toString()}`);
+  return api(
+    `/dtr/form/employees/${encodeURIComponent(employeeNumber)}/dtr?${params}`,
+  );
 };
 
-export const getEmployeeDtrCutoff = async (employeeNumber, month, year) => {
-  const params = new URLSearchParams({
-    employee_number: employeeNumber,
-    month: String(month),
-    year: String(year),
-  });
+export const getAttendanceRecords = async ({ from, to, q } = {}) => {
+  const params = new URLSearchParams({ per_page: "500" });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (q) params.set("q", q);
 
-  return api(`/employee-dtr-cutoff?${params.toString()}`);
+  const data = await api(`/dtr/records?${params}`);
+  return Array.isArray(data?.data) ? data.data : [];
 };
