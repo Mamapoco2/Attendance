@@ -1,0 +1,9 @@
+{
+  "appId": "com.maclang.dtr",
+  "appName": "DTR",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

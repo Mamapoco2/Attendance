@@ -1,7 +1,33 @@
-import { Routes, Route, Link, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
+import { Capacitor } from "@capacitor/core";
 import FaceRegister from "./pages/register";
 import FaceRecognize from "./pages/timeIn";
 import EmployeeDtr from "./pages/employeeDtr";
+
+// ── Mobile rules ─────────────────────────────────────────────────────────────
+// The DTR Form is hidden AND blocked inside the Android app.
+// Set this to true to also block it in a phone-sized browser window.
+const BLOCK_DTR_ON_SMALL_SCREENS = true;
+
+const IS_NATIVE = Capacitor.isNativePlatform();
+const SMALL_SCREEN = "(max-width: 860px)";
+
+function useDtrBlocked() {
+  const [small, setSmall] = useState(
+    () => window.matchMedia(SMALL_SCREEN).matches,
+  );
+
+  useEffect(() => {
+    if (!BLOCK_DTR_ON_SMALL_SCREENS) return;
+    const mq = window.matchMedia(SMALL_SCREEN);
+    const onChange = () => setSmall(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  return IS_NATIVE || (BLOCK_DTR_ON_SMALL_SCREENS && small);
+}
 
 const NAV = [
   {
@@ -31,6 +57,7 @@ const NAV = [
     to: "/employee-dtr",
     label: "DTR Form",
     hint: "CS Form No. 48",
+    desktopOnly: true, // hidden + blocked on mobile
     icon: (
       <>
         <path d="M9 11l3 3L22 4" />
@@ -40,15 +67,123 @@ const NAV = [
   },
 ];
 
+// Hamburger + slide-in drawer, phones only (under 768px). Desktop is untouched.
+const MOBILE_CSS = `
+.mobile-bar, .side-backdrop { display: none; }
+
+/* 860px matches the breakpoint already used in hospital.css */
+@media (max-width: 860px) {
+  .app-shell { display: block !important; }
+
+  .mobile-bar {
+    display: flex; align-items: center; gap: 10px;
+    position: sticky; top: 0; z-index: 40;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 12px 8px;
+    background: linear-gradient(135deg, #0c4a6e, #075985);
+  }
+  .mobile-title {
+    font-size: 14px; font-weight: 700; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .burger {
+    flex: none; width: 44px; height: 44px; border: 0; border-radius: 10px;
+    background: rgba(255, 255, 255, .12); cursor: pointer; position: relative;
+  }
+  .burger span {
+    position: absolute; left: 11px; right: 11px; height: 2px;
+    background: #fff; border-radius: 2px;
+    transition: transform .2s, opacity .2s, top .2s;
+  }
+  .burger span:nth-child(1) { top: 14px; }
+  .burger span:nth-child(2) { top: 21px; }
+  .burger span:nth-child(3) { top: 28px; }
+  .burger.open span:nth-child(1) { top: 21px; transform: rotate(45deg); }
+  .burger.open span:nth-child(2) { opacity: 0; }
+  .burger.open span:nth-child(3) { top: 21px; transform: rotate(-45deg); }
+
+  /* Drawer */
+  .app-shell .sidebar {
+    position: fixed !important; top: 0; bottom: 0; left: 0; right: auto !important;
+    width: min(82vw, 300px) !important;
+    height: 100% !important; min-height: 100% !important;
+    display: flex !important; flex-direction: column !important;
+    align-items: stretch !important;
+    overflow-x: hidden !important; overflow-y: auto !important;
+    z-index: 60;
+    padding-top: env(safe-area-inset-top, 0px);
+    transform: translateX(-100%); transition: transform .22s ease;
+  }
+  .app-shell .sidebar.open { transform: none; box-shadow: 0 0 40px rgba(0, 0, 0, .35); }
+
+  /* Undo the old "horizontal strip" rules so links stack in a column */
+  .app-shell .side-nav {
+    display: flex !important; flex-direction: column !important; flex-wrap: nowrap !important;
+    gap: 4px !important; width: 100% !important;
+    overflow: visible !important; padding: 12px !important;
+  }
+  .app-shell .side-link {
+    width: 100% !important; flex: none !important; white-space: normal !important;
+  }
+  .app-shell .side-hint { display: block !important; }
+  .app-shell .side-foot { display: block !important; margin-top: auto; }
+
+  .side-backdrop.open {
+    display: block; position: fixed; inset: 0; z-index: 55;
+    background: rgba(15, 23, 42, .45);
+  }
+
+  .app-shell .app-main { margin-left: 0 !important; width: 100% !important; }
+}
+`;
+
 export default function App() {
   const { pathname } = useLocation();
+  const dtrBlocked = useDtrBlocked();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const visibleNav = NAV.filter((n) => !(dtrBlocked && n.desktopOnly));
+
   const isActive = (to) =>
     pathname === to ||
     (to === "/recognize" && !NAV.some((n) => n.to === pathname));
 
+  // Close the drawer after navigating
+  useEffect(() => setMenuOpen(false), [pathname]);
+
+  // Close with the Escape key
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <style>{MOBILE_CSS}</style>
+
+      {/* Mobile top bar with the hamburger button */}
+      <header className="mobile-bar">
+        <button
+          type="button"
+          className={`burger ${menuOpen ? "open" : ""}`}
+          aria-label={menuOpen ? "Close menu" : "Open menu"}
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <div className="mobile-title">Staff Attendance Portal</div>
+      </header>
+
+      <div
+        className={`side-backdrop ${menuOpen ? "open" : ""}`}
+        onClick={() => setMenuOpen(false)}
+      />
+
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <Link to="/" className="side-brand">
           <div className="side-cross">
             <svg viewBox="0 0 24 24">
@@ -64,7 +199,7 @@ export default function App() {
         </Link>
 
         <nav className="side-nav">
-          {NAV.map((n) => (
+          {visibleNav.map((n) => (
             <Link
               key={n.to}
               to={n.to}
@@ -105,7 +240,16 @@ export default function App() {
         <Routes>
           <Route path="/register" element={<FaceRegister />} />
           <Route path="/recognize" element={<FaceRecognize />} />
-          <Route path="/employee-dtr" element={<EmployeeDtr />} />
+          <Route
+            path="/employee-dtr"
+            element={
+              dtrBlocked ? (
+                <Navigate to="/recognize" replace />
+              ) : (
+                <EmployeeDtr />
+              )
+            }
+          />
           <Route path="*" element={<FaceRecognize />} />
         </Routes>
       </main>

@@ -1,15 +1,43 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { Capacitor } from "@capacitor/core";
 import { FaceDetection } from "@mediapipe/face_detection";
 import { FaceMesh } from "@mediapipe/face_mesh";
 import { recognizeFace } from "../../services/faceService";
 import { recordAttendance } from "../../services/attendanceService";
 import { useLiveness } from "../../hooks/useLiveness";
 import AlertDialog from "../components/AlertDialog";
+import { CAMERA_RESPONSIVE_CSS } from "./cameraResponsive";
+import { unlockAudio, playSuccess, playError } from "../../services/sounds";
+import { hapticTick, hapticSuccess, hapticError } from "../../services/haptics";
 
-const CAMERA_WIDTH = 1280;
-const CAMERA_HEIGHT = 720;
-const CAMERA_FPS = 30;
-const JPEG_QUALITY = 0.95;
+// ── Per-platform settings ────────────────────────────────────────────────────
+// WEB values are exactly what you had before (web behaviour is unchanged).
+// NATIVE values are tuned for speed in the Android app only.
+const IS_NATIVE = Capacitor.isNativePlatform();
+
+const WEB_CFG = {
+  cameraW: 1280,
+  cameraH: 720,
+  fps: 30,
+  jpegQuality: 0.95,
+  frames: 3, // frames sent to /recognize
+  frameDelayMs: 150, // gap between those frames
+  minFrameMs: 0, // 0 = no throttle on the MediaPipe loop
+  challenges: 2, // liveness challenges required
+};
+
+const NATIVE_CFG = {
+  cameraW: 640, // matches the 640px the server downsizes to anyway
+  cameraH: 480,
+  fps: 30,
+  jpegQuality: 0.85,
+  frames: 3,
+  frameDelayMs: 60,
+  minFrameMs: 50, // ~20 fps cap so slow phones don't queue frames
+  challenges: 1, // set to 2 for stricter liveness (slower)
+};
+
+const CFG = IS_NATIVE ? NATIVE_CFG : WEB_CFG;
 
 export default function TimeIn() {
   const videoRef = useRef(null);
@@ -50,7 +78,7 @@ export default function TimeIn() {
     startChallenge,
     resetChallenge,
     processMeshResults,
-  } = useLiveness();
+  } = useLiveness({ challengesRequired: CFG.challenges });
 
   useEffect(() => {
     livenessStateRef.current.ok = livenessOk;
@@ -100,28 +128,31 @@ export default function TimeIn() {
     warmCache();
   }, []);
 
-  // ── Capture a full-resolution frame as JPEG ────────────────────────────────
+  // ── Capture a frame as JPEG (camera resolution) ────────────────────────────
   const captureImage = () => {
     const video = videoRef.current;
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext("2d").drawImage(video, 0, 0);
-    return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+    return canvas.toDataURL("image/jpeg", CFG.jpegQuality);
   };
 
   // Capture N frames a few ms apart for accurate multi-frame recognition.
   // Backend requires an ARRAY of 3–5 images (see Laravel: min:3|max:5).
-  const captureFrames = useCallback(async (count = 3, delayMs = 150) => {
-    const frames = [];
-    for (let i = 0; i < count; i++) {
-      frames.push(captureImage());
-      if (i < count - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+  const captureFrames = useCallback(
+    async (count = CFG.frames, delayMs = CFG.frameDelayMs) => {
+      const frames = [];
+      for (let i = 0; i < count; i++) {
+        frames.push(captureImage());
+        if (i < count - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
       }
-    }
-    return frames;
-  }, []);
+      return frames;
+    },
+    [],
+  );
 
   // Recognition: fires once per face appearance after liveness passes
   const attemptRecognition = useCallback(async () => {
@@ -145,13 +176,14 @@ export default function TimeIn() {
       setStatus("Verifying identity…");
       setStatusType("scanning");
 
-      const images = await captureFrames(3, 150);
+      const images = await captureFrames();
       const result = await recognizeFace(images);
 
       if (result.match) {
         recognizedNameRef.current = result.name;
         recognizedTicketRef.current = result.ticket;
         setRecognizedName(result.name);
+        hapticTick();
         setStatus("Identity verified");
         setStatusType("success");
       } else {
@@ -159,7 +191,7 @@ export default function TimeIn() {
         setRecognizedName(null);
         setStatus("Face not recognized");
         setStatusType("error");
-        // Allow retry after a short delay
+        hapticError();
         setTimeout(() => {
           recognitionFiredRef.current = false;
         }, 3000);
@@ -168,6 +200,7 @@ export default function TimeIn() {
       console.error("Recognition error:", err);
       setStatus("Recognition failed — please try again");
       setStatusType("error");
+      hapticError();
       recognizedNameRef.current = null;
       recognitionFiredRef.current = false;
     } finally {
@@ -188,10 +221,10 @@ export default function TimeIn() {
     let running = true;
     let stream = null;
     let rafId = null;
+    let lastRun = 0;
 
     const faceDetection = new FaceDetection({
-      locateFile: (f) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${f}`,
+      locateFile: (f) => `/mediapipe/face_detection/${f}`,
     });
     faceDetection.setOptions({ model: "short", minDetectionConfidence: 0.4 });
 
@@ -203,6 +236,15 @@ export default function TimeIn() {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // On small screens the 1280px canvas is shown much smaller, which makes
+      // brackets/labels tiny. Scale them up (never below 1 → desktop unchanged).
+      const cssPerPx =
+        Math.max(
+          canvas.clientWidth / canvas.width,
+          canvas.clientHeight / canvas.height,
+        ) || 1;
+      const uiScale = Math.min(3, Math.max(1, 1 / cssPerPx / 1.8));
 
       if (results.detections.length > 0) {
         faceStableCounter.current++;
@@ -236,14 +278,14 @@ export default function TimeIn() {
                 ? "#f59e0b"
                 : "#94a3b8";
 
-        drawCornerBrackets(ctx, x, y, w, h, color);
+        drawCornerBrackets(ctx, x, y, w, h, color, uiScale);
         drawScanLine(ctx, x, y, w, h, color);
-        drawProgressDots(ctx, x, y, w, challengeProgress);
+        drawProgressDots(ctx, x, y, w, challengeProgress, uiScale);
 
         if (recognizedNameRef.current) {
-          drawLabel(ctx, recognizedNameRef.current, x, y, w, h, color);
+          drawLabel(ctx, recognizedNameRef.current, x, y, w, h, color, uiScale);
         } else if (challengeLabel) {
-          drawLabel(ctx, challengeLabel, x, y, w, h, "#f59e0b");
+          drawLabel(ctx, challengeLabel, x, y, w, h, "#f59e0b", uiScale);
         }
 
         ctx.shadowBlur = 0;
@@ -277,8 +319,7 @@ export default function TimeIn() {
     });
 
     const faceMesh = new FaceMesh({
-      locateFile: (f) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`,
+      locateFile: (f) => `/mediapipe/face_mesh/${f}`,
     });
     faceMesh.setOptions({
       maxNumFaces: 1,
@@ -286,12 +327,16 @@ export default function TimeIn() {
       minDetectionConfidence: 0.5,
       minTrackingConfidence: 0.5,
     });
-    faceMesh.onResults(processMeshResults);
+    // Pass the video so the blink detector always knows the frame width/height
+    faceMesh.onResults((results) => processMeshResults(results, video));
 
-    // Frame loop: one detection at a time, no overlapping sends
+    // Frame loop: one detection at a time, no overlapping sends.
+    // CFG.minFrameMs is 0 on web (no throttle) and ~50ms in the Android app.
     async function loop() {
       if (!running) return;
-      if (video.readyState >= 2) {
+      const now = performance.now();
+      if (video.readyState >= 2 && now - lastRun >= CFG.minFrameMs) {
+        lastRun = now;
         try {
           await faceDetection.send({ image: video });
           // Only run FaceMesh when a challenge is active
@@ -307,17 +352,30 @@ export default function TimeIn() {
 
     async function startCamera() {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        const constraints = {
           audio: false,
           video: {
-            width: { ideal: CAMERA_WIDTH },
-            height: { ideal: CAMERA_HEIGHT },
-            frameRate: { ideal: CAMERA_FPS },
-            facingMode: "user",
-            // Helps sharpness where supported (mostly Chrome); ignored elsewhere
-            advanced: [{ focusMode: "continuous" }],
+            facingMode: { exact: "user" },
+            width: { ideal: CFG.cameraW },
+            height: { ideal: CFG.cameraH },
+            frameRate: { ideal: CFG.fps },
           },
-        });
+        };
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+          // Device may not support exact facingMode (e.g. desktop webcams)
+          if (
+            err.name === "OverconstrainedError" ||
+            err.name === "NotFoundError"
+          ) {
+            constraints.video.facingMode = "user";
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+          } else {
+            throw err;
+          }
+        }
 
         if (!running) {
           stream.getTracks().forEach((t) => t.stop());
@@ -327,9 +385,32 @@ export default function TimeIn() {
         video.srcObject = stream;
         await video.play();
 
-        // Log the resolution the browser actually gave us
         const settings = stream.getVideoTracks()[0].getSettings();
         console.info("Camera settings:", settings);
+
+        // Load BOTH MediaPipe models before scanning starts, so the blink
+        // challenge never waits on a download.
+        setStatus("Loading face detection…");
+        setStatusType("scanning");
+        try {
+          await Promise.race([
+            (async () => {
+              await faceDetection.initialize();
+              await faceMesh.initialize();
+            })(),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("timeout")), 30000),
+            ),
+          ]);
+        } catch (err) {
+          console.error("MediaPipe load error:", err);
+          setStatus(
+            "Face detection could not load — check the internet connection",
+          );
+          setStatusType("error");
+          return;
+        }
+        if (!running) return;
 
         setStatus("Ready to scan");
         setStatusType("idle");
@@ -356,11 +437,11 @@ export default function TimeIn() {
   }, []);
 
   // ── Canvas helpers ─────────────────────────────────────────────────────────
-  function drawCornerBrackets(ctx, x, y, w, h, color) {
+  function drawCornerBrackets(ctx, x, y, w, h, color, k = 1) {
     // Scale with the video so brackets stay proportional at 720p
-    const cs = Math.max(16, w * 0.12);
+    const cs = Math.max(16 * k, w * 0.12);
     ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 * k;
     ctx.shadowColor = color;
     ctx.shadowBlur = 6;
     [
@@ -388,15 +469,15 @@ export default function TimeIn() {
   }
 
   // Challenge progress dots above the face box
-  function drawProgressDots(ctx, x, y, w, progress) {
+  function drawProgressDots(ctx, x, y, w, progress, k = 1) {
     if (!progress || progress.total === 0) return;
-    const dotR = 6;
-    const gap = 18;
+    const dotR = 6 * k;
+    const gap = 18 * k;
     const total = progress.total;
     const done = progress.current;
     const totalWidth = total * dotR * 2 + (total - 1) * gap;
     const startX = x + w / 2 - totalWidth / 2 + dotR;
-    const dotY = y - 28;
+    const dotY = y - 28 * k;
 
     ctx.shadowBlur = 0;
     for (let i = 0; i < total; i++) {
@@ -408,12 +489,12 @@ export default function TimeIn() {
     }
   }
 
-  function drawLabel(ctx, text, x, y, w, h, color) {
+  function drawLabel(ctx, text, x, y, w, h, color, k = 1) {
     ctx.shadowBlur = 8;
     ctx.fillStyle = color;
-    ctx.font = "bold 20px 'DM Sans', sans-serif";
+    ctx.font = `bold ${Math.round(20 * k)}px 'DM Sans', sans-serif`;
     ctx.textAlign = "center";
-    const textY = y > 48 ? y - 40 : y + h + 28;
+    const textY = y > 48 * k ? y - 40 * k : y + h + 28 * k;
     const cx = x + w / 2;
     ctx.save();
     ctx.scale(-1, 1);
@@ -422,6 +503,7 @@ export default function TimeIn() {
   }
 
   const handleAttendance = async () => {
+    unlockAudio(); // keeps sound allowed after the awaits below
     if (!recognizedName) {
       setStatus("No face detected — please look at the camera");
       setStatusType("error");
@@ -446,6 +528,14 @@ export default function TimeIn() {
         message: attendance.message,
       });
 
+      if (recorded) {
+        playSuccess(attendance.type);
+        hapticSuccess();
+      } else {
+        playError();
+        hapticError();
+      }
+
       // The ticket is single-use, so the next punch needs a fresh scan.
       recognizedTicketRef.current = null;
       recognizedNameRef.current = null;
@@ -455,6 +545,8 @@ export default function TimeIn() {
       console.error("Attendance error:", err);
       setStatus(err?.message || "Failed to record attendance");
       setStatusType("error");
+      playError();
+      hapticError();
     }
   };
 
@@ -502,24 +594,19 @@ export default function TimeIn() {
 
   return (
     <>
-      <div className="hosp-root">
-        <div className="top-bar">
-          <div className="hospital-brand">
-            <div className="cross-icon">
-              <svg viewBox="0 0 24 24">
-                <path d="M19 8h-4V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4h4a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z" />
-              </svg>
-            </div>
-            <div>
-              <div className="brand-name">
-                Rosario Maclang Bautista General Hospital
-              </div>
-              <div className="brand-sub">Staff Attendance Portal</div>
-            </div>
+      <style>{CAMERA_RESPONSIVE_CSS}</style>
+      <div className="hosp-root" style={{ "--cam-reserve": "320px" }}>
+        <div className="hospital-brand">
+          <div className="cross-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M19 8h-4V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4h4a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z" />
+            </svg>
           </div>
-          <div className="live-pill">
-            <span className="live-dot" />
-            Camera Active
+          <div>
+            <div className="brand-name">
+              Rosario Maclang Bautista General Hospital
+            </div>
+            <div className="brand-sub">Staff Attendance Portal</div>
           </div>
         </div>
 

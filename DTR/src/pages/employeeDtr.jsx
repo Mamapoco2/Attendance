@@ -245,7 +245,7 @@ export default function EmployeeDtr() {
   };
 
   return (
-    <div className="employee-dtr-page flex justify-center px-10 pb-10 pt-8 md:px-6">
+    <div className="employee-dtr-page flex justify-center px-3 pb-8 pt-4 sm:px-6 sm:pt-8 lg:px-10">
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
 
@@ -391,6 +391,19 @@ export default function EmployeeDtr() {
 
         @keyframes dtr-spin { to { transform: rotate(360deg); } }
         .dtr-spin { animation: dtr-spin 0.8s linear infinite; }
+
+        /* ── Phones & small tablets ── */
+        @media (max-width: 768px) {
+          .dtr-controls-card { padding: 16px; border-radius: 16px; }
+          .dtr-field { max-width: none !important; min-width: calc(50% - 7px); }
+          .dtr-field:first-child { min-width: 100%; }
+          .dtr-input, .dtr-select { font-size: 16px; padding: 11px 12px; }
+          .dtr-select { padding-right: 32px; }
+          .dtr-actions { width: 100%; }
+          .dtr-btn { flex: 1; justify-content: center; min-height: 46px; font-size: 15px; }
+          .dtr-cutoff-bar { flex-wrap: wrap; gap: 6px 10px; }
+          .dtr-paper { padding: 14px 10px; }
+        }
 
         /* ── Print ── */
        @media print {
@@ -638,7 +651,7 @@ export default function EmployeeDtr() {
         <div className="dtr-paper">
           {/* fallback cutoff text when no result yet */}
 
-          <div className="employee-dtr-copies grid grid-cols-2 gap-6">
+          <div className="employee-dtr-copies grid grid-cols-1 gap-6 md:grid-cols-2">
             <DtrCopy
               employeeName={result?.employee?.name || ""}
               entriesByDay={leftEntriesByDay}

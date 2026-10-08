@@ -60,13 +60,15 @@ export default function ViewDTR() {
   }, [records, search, dateFrom, dateTo]);
 
   return (
-    <div style={{ padding: 24 }}>
+    <div className="view-dtr-page" style={{ padding: 24 }}>
+      <style>{VIEW_DTR_RESPONSIVE_CSS}</style>
       <h2 style={{ marginBottom: 12 }}>Attendance Records</h2>
       <p style={{ marginBottom: 16, color: "#64748b" }}>
         Time in / time out with separate employee photos
       </p>
 
       <input
+        className="view-dtr-search"
         type="text"
         placeholder="Search employee name..."
         value={search}
@@ -81,6 +83,7 @@ export default function ViewDTR() {
         }}
       />
       <div
+        className="view-dtr-dates"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -106,8 +109,9 @@ export default function ViewDTR() {
       {error && <div style={{ color: "#dc2626" }}>{error}</div>}
 
       {!loading && !error && (
-        <div style={{ overflowX: "auto", background: "#fff", borderRadius: 8 }}>
+        <div className="view-dtr-wrap" style={{ overflowX: "auto", background: "#fff", borderRadius: 8 }}>
           <table
+            className="view-dtr-table"
             style={{
               width: "100%",
               borderCollapse: "collapse",
@@ -127,12 +131,12 @@ export default function ViewDTR() {
             <tbody>
               {filtered.map((record) => (
                 <tr key={record.id}>
-                  <td style={tdStyle}>{record.name}</td>
-                  <td style={tdStyle}>{record.date}</td>
-                  <td style={tdStyle}>
+                  <td data-label="Name" style={tdStyle}>{record.name}</td>
+                  <td data-label="Date" style={tdStyle}>{record.date}</td>
+                  <td data-label="Time In" style={tdStyle}>
                     {formatTime12h(record.time_in) || "-"}
                   </td>
-                  <td style={tdStyle}>
+                  <td data-label="Time In Photo" style={tdStyle}>
                     {record.has_time_in_image ? (
                       <AuthImage
                         attendanceId={record.id}
@@ -144,10 +148,10 @@ export default function ViewDTR() {
                       <span style={{ color: "#94a3b8" }}>No image</span>
                     )}
                   </td>
-                  <td style={tdStyle}>
+                  <td data-label="Time Out" style={tdStyle}>
                     {formatTime12h(record.time_out) || "-"}
                   </td>
-                  <td style={tdStyle}>
+                  <td data-label="Time Out Photo" style={tdStyle}>
                     {record.has_time_out_image ? (
                       <AuthImage
                         attendanceId={record.id}
@@ -176,6 +180,37 @@ export default function ViewDTR() {
     </div>
   );
 }
+
+const VIEW_DTR_RESPONSIVE_CSS = `
+  .view-dtr-page input { font-size: 16px; box-sizing: border-box; }
+  @media (max-width: 720px) {
+    .view-dtr-page { padding: 14px !important; }
+    .view-dtr-search { max-width: none !important; }
+    .view-dtr-dates input { flex: 1 1 140px; max-width: none !important; }
+    .view-dtr-wrap { background: transparent !important; overflow: visible !important; }
+    .view-dtr-table { min-width: 0 !important; }
+    .view-dtr-table thead { display: none; }
+    .view-dtr-table, .view-dtr-table tbody, .view-dtr-table tr { display: block; width: 100%; }
+    .view-dtr-table tr {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      margin-bottom: 12px; overflow: hidden;
+    }
+    .view-dtr-table td {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; text-align: right;
+      padding: 10px 14px !important;
+      border-bottom: 1px solid #f1f5f9 !important;
+    }
+    .view-dtr-table td:last-child { border-bottom: 0 !important; }
+    .view-dtr-table td::before {
+      content: attr(data-label); flex-shrink: 0;
+      font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.04em; color: #64748b; text-align: left;
+    }
+    .view-dtr-table td[colspan] { display: block; text-align: center; }
+    .view-dtr-table td[colspan]::before { content: none; }
+  }
+`;
 
 const thStyle = {
   textAlign: "left",

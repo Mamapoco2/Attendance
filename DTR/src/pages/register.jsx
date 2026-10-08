@@ -3,6 +3,7 @@ import { FaceDetection } from "@mediapipe/face_detection";
 import { Camera } from "@mediapipe/camera_utils";
 import { registerFace, lookupEmployee } from "../../services/faceService";
 import AlertDialog from "../components/AlertDialog";
+import { CAMERA_RESPONSIVE_CSS } from "./cameraResponsive";
 
 export default function FaceRegister() {
   const videoRef = useRef(null);
@@ -123,6 +124,7 @@ export default function FaceRegister() {
       },
       width: 320,
       height: 240,
+      facingMode: "user",
     });
 
     const started = camera.start().catch((error) => {
@@ -287,25 +289,22 @@ export default function FaceRegister() {
 
   return (
     <>
-      <div className="hosp-root">
-        {/* Top bar */}
-        <div className="top-bar">
-          <div className="hospital-brand">
-            <div className="cross-icon">
-              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path d="M19 8h-4V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4h4a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z" />
-              </svg>
-            </div>
-            <div>
-              <div className="brand-name">
-                Rosario Maclang Bautista General Hospital
-              </div>
-              <div className="brand-sub">Staff Attendance Portal</div>
-            </div>
+      <style>{CAMERA_RESPONSIVE_CSS}</style>
+      <div
+        className="hosp-root"
+        style={{ "--cam-ratio-phone": "1 / 1", "--cam-reserve": "470px" }}
+      >
+        <div className="hospital-brand">
+          <div className="cross-icon">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M19 8h-4V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v4H5a1 1 0 0 0-1 1v4a1 1 0 0 0 1 1h4v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4h4a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z" />
+            </svg>
           </div>
-          <div className="live-pill">
-            <span className="live-dot" />
-            Camera Active
+          <div>
+            <div className="brand-name">
+              Rosario Maclang Bautista General Hospital
+            </div>
+            <div className="brand-sub">Staff Attendance Portal</div>
           </div>
         </div>
 

@@ -15,7 +15,7 @@
 }
 body {
   background: var(--s50);
-  font-family: "DM Sans", sans-serif;
+  font-family: "Poppins", sans-serif;
   color: var(--ink);
 }
 /* shell */
@@ -143,14 +143,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
 }
-.top-bar {
-  width: 100%;
-  max-width: 1040px;
-  display: flex;
-  justify-content: flex-end;
-}
+
 .hospital-brand {
   display: none;
 }
@@ -784,7 +778,7 @@ table.rec tbody tr:hover {
     z-index: 50;
   }
   .side-brand {
-    padding: 0;
+    padding: 10px;
     border: 0;
   }
   .side-name,

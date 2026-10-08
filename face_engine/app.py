@@ -1,5 +1,9 @@
+from collections import defaultdict
+import time
+
 from flask import Flask, request, jsonify
 from flask_caching import Cache
+from flask_cors import CORS
 import face_recognition
 import numpy as np
 import base64
@@ -13,6 +17,7 @@ log = logging.getLogger(__name__)
 
 # ── App & cache setup ─────────────────────────────────────────────────────────
 app = Flask(__name__)
+CORS(app)
 app.config["CACHE_TYPE"] = "SimpleCache"
 app.config["CACHE_DEFAULT_TIMEOUT"] = 300
 cache = Cache(app)
@@ -23,6 +28,11 @@ REGISTER_MAX_IMAGES = 10
 RECOGNIZE_MIN_FRAMES = 3
 RECOGNIZE_MAX_FRAMES = 5
 TOLERANCE = 0.5
+
+ENCODE_MAX_DIM = 640      # image size used to compute the 128-d encoding (unchanged)
+DETECT_MAX_DIM = 320      # recognition only: faces are FOUND on a smaller copy (faster)
+EARLY_EXIT_VOTES = 2      # recognition stops once this many frames agree on one person
+
 
 # ── Image decoding ────────────────────────────────────────────────────────────
 def decode_image(image_data: str) -> np.ndarray:
@@ -42,10 +52,9 @@ def decode_image(image_data: str) -> np.ndarray:
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
-def preprocess_image(image: np.ndarray) -> np.ndarray:
-    """Downscale large images before detection for speed."""
+def preprocess_image(image: np.ndarray, max_dim: int = ENCODE_MAX_DIM) -> np.ndarray:
+    """Downscale large images (never upscales)."""
     h, w = image.shape[:2]
-    max_dim = 640
 
     if max(h, w) > max_dim:
         scale = max_dim / max(h, w)
@@ -59,18 +68,58 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
 
 
 # ── Encoding helpers ──────────────────────────────────────────────────────────
-def get_face_encoding(image: np.ndarray) -> np.ndarray | None:
-    """Return the first face encoding found, or None. Uses HOG (fast, server-friendly)."""
-    small = preprocess_image(image)
-    locations = face_recognition.face_locations(
-        small, number_of_times_to_upsample=1, model="hog"
+def _largest(locations):
+    """Pick the biggest face (the person standing at the kiosk)."""
+    return max(locations, key=lambda l: (l[2] - l[0]) * (l[1] - l[3]))
+
+
+def get_face_encoding(image: np.ndarray, fast: bool = False) -> np.ndarray | None:
+    """
+    Return the face encoding, or None.
+
+    fast=False  – original behaviour (used for REGISTRATION, so stored
+                  encodings are computed exactly as before).
+    fast=True   – recognition: detect the face on a small copy, then compute
+                  the encoding on the same 640px image as before.
+    """
+    if not fast:
+        small = preprocess_image(image)
+        locations = face_recognition.face_locations(
+            small, number_of_times_to_upsample=1, model="hog"
+        )
+        if not locations:
+            return None
+        encodings = face_recognition.face_encodings(
+            small, known_face_locations=locations, num_jitters=1
+        )
+        return encodings[0] if encodings else None
+
+    full = preprocess_image(image, ENCODE_MAX_DIM)
+    h, w = full.shape[:2]
+    scale = min(1.0, DETECT_MAX_DIM / max(h, w))
+    detect_img = (
+        cv2.resize(full, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        if scale < 1.0
+        else full
     )
 
+    locations = face_recognition.face_locations(
+        detect_img, number_of_times_to_upsample=0, model="hog"
+    )
+    if not locations:
+        # Face may be small in the frame — one slower retry
+        locations = face_recognition.face_locations(
+            detect_img, number_of_times_to_upsample=1, model="hog"
+        )
     if not locations:
         return None
 
+    top, right, bottom, left = _largest(locations)
+    inv = 1.0 / scale
+    full_loc = [(int(top * inv), int(right * inv), int(bottom * inv), int(left * inv))]
+
     encodings = face_recognition.face_encodings(
-        small, known_face_locations=locations, num_jitters=1
+        full, known_face_locations=full_loc, num_jitters=1
     )
     return encodings[0] if encodings else None
 
@@ -79,16 +128,16 @@ def image_hash(image_data: str) -> str:
     return hashlib.sha256(image_data.encode()).hexdigest()
 
 
-def encode_image_cached(image_data: str):
+def encode_image_cached(image_data: str, fast: bool = False):
     """Cache a single image's encoding by hash. Returns a list or None."""
-    key = f"enc:{image_hash(image_data)}"
+    key = f"enc:{'f' if fast else 's'}:{image_hash(image_data)}"
     cached = cache.get(key)
 
     if cached is not None:
         return cached if cached != "__no_face__" else None
 
     image = decode_image(image_data)
-    encoding = get_face_encoding(image)
+    encoding = get_face_encoding(image, fast=fast)
 
     if encoding is not None:
         cache.set(key, encoding.tolist())
@@ -98,7 +147,7 @@ def encode_image_cached(image_data: str):
         return None
 
 
-def encode_many(images: list[str]) -> list[list[float]]:
+def encode_many(images: list[str], fast: bool = False) -> list[list[float]]:
     """
     Encode a batch of images, skipping any frame where no face was found.
     Returns a list of encodings (as plain lists) — may be shorter than
@@ -107,7 +156,7 @@ def encode_many(images: list[str]) -> list[list[float]]:
     encodings = []
     for i, img in enumerate(images):
         try:
-            enc = encode_image_cached(img)
+            enc = encode_image_cached(img, fast=fast)
         except ValueError as e:
             log.warning("Skipping frame %d: %s", i, e)
             continue
@@ -143,7 +192,7 @@ def register():
         images = images[:REGISTER_MAX_IMAGES]
 
     try:
-        encodings = encode_many(images)
+        encodings = encode_many(images, fast=False)
     except Exception:
         log.exception("Unexpected error during registration encoding")
         return jsonify({"error": "Internal error during image processing."}), 500
@@ -171,7 +220,11 @@ def register():
 
 @app.route("/recognize", methods=["POST"])
 def recognize():
+    t0 = time.perf_counter()
+    payload_kb = (request.content_length or 0) / 1024
+
     data = request.get_json(silent=True)
+    t_parse = time.perf_counter()
 
     if not data:
         return jsonify({"error": "Request body must be JSON."}), 400
@@ -202,29 +255,50 @@ def recognize():
                 {"error": f"known_faces[{i}] is missing 'name' or 'encoding(s)'."}
             ), 422
         normalized_known.append({"name": name, "encodings": np.array(encs)})
+    t_norm = time.perf_counter()
 
+    # ── Per-frame best match, stopping early once frames agree ────────────────
+    frame_votes = []  # list of (name, best_distance) per processed frame
     try:
-        frame_encodings = encode_many(images)
+        for i, img in enumerate(images):
+            try:
+                enc = encode_image_cached(img, fast=True)
+            except ValueError as e:
+                log.warning("Skipping frame %d: %s", i, e)
+                continue
+            if enc is None:
+                continue
+
+            frame_enc_np = np.array(enc)
+            best_name, best_dist = None, float("inf")
+            for known in normalized_known:
+                dists = face_recognition.face_distance(known["encodings"], frame_enc_np)
+                min_dist = float(np.min(dists))
+                if min_dist < best_dist:
+                    best_dist = min_dist
+                    best_name = known["name"]
+            frame_votes.append((best_name, best_dist))
+
+            passing_names = [n for n, d in frame_votes if d <= TOLERANCE]
+            if len(passing_names) >= EARLY_EXIT_VOTES and len(set(passing_names)) == 1:
+                break
     except Exception:
         log.exception("Unexpected error during recognition encoding")
         return jsonify({"error": "Internal error during image processing."}), 500
+    t_done = time.perf_counter()
 
-    if not frame_encodings:
+    def log_timing(result: str):
+        log.info(
+            "TIMING %s | payload=%.0fKB known=%d frames_processed=%d | "
+            "parse=%.0fms normalize=%.0fms encode+compare=%.0fms total=%.0fms",
+            result, payload_kb, len(normalized_known), len(frame_votes),
+            (t_parse - t0) * 1000, (t_norm - t_parse) * 1000,
+            (t_done - t_norm) * 1000, (time.perf_counter() - t0) * 1000,
+        )
+
+    if not frame_votes:
+        log_timing("no-face")
         return jsonify({"error": "No face detected in any of the provided frames."}), 400
-
-    # ── Strategy: best-distance across all frames, with majority-vote tiebreak ──
-    # For each frame, find its single best match (name + distance) among known faces.
-    frame_votes = []  # list of (name, best_distance) per frame
-    for frame_enc in frame_encodings:
-        frame_enc_np = np.array(frame_enc)
-        best_name, best_dist = None, float("inf")
-        for known in normalized_known:
-            dists = face_recognition.face_distance(known["encodings"], frame_enc_np)
-            min_dist = float(np.min(dists))
-            if min_dist < best_dist:
-                best_dist = min_dist
-                best_name = known["name"]
-        frame_votes.append((best_name, best_dist))
 
     # Majority vote among frames that passed tolerance
     passing_votes = [(n, d) for n, d in frame_votes if d <= TOLERANCE]
@@ -232,10 +306,10 @@ def recognize():
     if not passing_votes:
         best_overall = min(frame_votes, key=lambda v: v[1])
         log.info("No match found (best distance=%.4f across %d frames)", best_overall[1], len(frame_votes))
+        log_timing("no-match")
         return jsonify({"match": False, "best_distance": round(best_overall[1], 4)})
 
     # Count votes per name; break ties by lowest average distance
-    from collections import defaultdict
     tally = defaultdict(list)
     for n, d in passing_votes:
         tally[n].append(d)
@@ -251,6 +325,7 @@ def recognize():
         "Recognized '%s' with %d/%d frame votes (avg distance=%.4f)",
         matched_name, votes, len(frame_votes), avg_dist
     )
+    log_timing("match")
     return jsonify({
         "match": True,
         "name": matched_name,
@@ -281,4 +356,4 @@ def internal_error(_):
 
 
 if __name__ == "__main__":
-    app.run(port=5001, threaded=True, debug=False)
+    app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)

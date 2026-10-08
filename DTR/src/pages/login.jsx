@@ -34,16 +34,16 @@ export default function Login() {
 
   const field = {
     width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1",
-    borderRadius: 8, fontSize: 14, marginTop: 6,
+    borderRadius: 8, fontSize: 16, marginTop: 6, boxSizing: "border-box",
   };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: "64px 16px" }}>
+    <div style={{ display: "flex", justifyContent: "center", padding: "clamp(24px, 8vh, 64px) 16px" }}>
       <form
         onSubmit={submit}
         style={{
           width: "100%", maxWidth: 380, background: "white", borderRadius: 12,
-          padding: 28, boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
+          padding: "24px 20px", boxSizing: "border-box", boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
         }}
       >
         <h2 style={{ marginBottom: 4, color: "#0f172a" }}>Staff Sign In</h2>
@@ -82,7 +82,7 @@ export default function Login() {
           type="submit"
           disabled={loading}
           style={{
-            marginTop: 20, width: "100%", padding: "11px 0", border: 0, borderRadius: 8,
+            marginTop: 20, width: "100%", padding: "14px 0", fontSize: 16, border: 0, borderRadius: 8,
             background: loading ? "#7dd3fc" : "#0ea5e9", color: "white", fontWeight: 600,
             cursor: loading ? "default" : "pointer",
           }}
