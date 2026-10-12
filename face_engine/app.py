@@ -355,5 +355,30 @@ def internal_error(_):
     return jsonify({"error": "Internal server error."}), 500
 
 
+# ── Keep the models warm ──────────────────────────────────────────────────────
+# After a long idle period the first recognition can be slow because the
+# process's memory was paged out. A tiny dummy run every minute keeps the face
+# models resident, so the first real scan is as fast as the rest.
+import threading
+
+
+def _keep_warm():
+    blank = np.zeros((240, 320, 3), dtype=np.uint8)
+    while True:
+        try:
+            face_recognition.face_locations(
+                blank, number_of_times_to_upsample=0, model="hog"
+            )
+            face_recognition.face_encodings(
+                blank, known_face_locations=[(40, 200, 200, 40)], num_jitters=1
+            )
+        except Exception:
+            log.exception("keep-warm run failed")
+        time.sleep(60)
+
+
+threading.Thread(target=_keep_warm, daemon=True).start()
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
