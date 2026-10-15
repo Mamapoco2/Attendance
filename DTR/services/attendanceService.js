@@ -6,16 +6,6 @@ export const recordAttendance = (ticket, image) =>
     body: JSON.stringify({ ticket, image }),
   });
 
-export const getEmployeeDtrCutoff = (employeeNumber, month, year) => {
-  const params = new URLSearchParams({
-    month: String(month),
-    year: String(year),
-  });
-  return api(
-    `/dtr/form/employees/${encodeURIComponent(employeeNumber)}/dtr?${params}`,
-  );
-};
-
 export const getAttendanceRecords = async ({ from, to, q } = {}) => {
   const params = new URLSearchParams({ per_page: "500" });
   if (from) params.set("from", from);

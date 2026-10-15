@@ -1,33 +1,7 @@
 import { useEffect, useState } from "react";
-import { Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
-import { Capacitor } from "@capacitor/core";
+import { Routes, Route, Link, useLocation } from "react-router-dom";
 import FaceRegister from "./pages/register";
 import FaceRecognize from "./pages/timeIn";
-import EmployeeDtr from "./pages/employeeDtr";
-
-// ── Mobile rules ─────────────────────────────────────────────────────────────
-// The DTR Form is hidden AND blocked inside the Android app.
-// Set this to true to also block it in a phone-sized browser window.
-const BLOCK_DTR_ON_SMALL_SCREENS = true;
-
-const IS_NATIVE = Capacitor.isNativePlatform();
-const SMALL_SCREEN = "(max-width: 860px)";
-
-function useDtrBlocked() {
-  const [small, setSmall] = useState(
-    () => window.matchMedia(SMALL_SCREEN).matches,
-  );
-
-  useEffect(() => {
-    if (!BLOCK_DTR_ON_SMALL_SCREENS) return;
-    const mq = window.matchMedia(SMALL_SCREEN);
-    const onChange = () => setSmall(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-
-  return IS_NATIVE || (BLOCK_DTR_ON_SMALL_SCREENS && small);
-}
 
 const NAV = [
   {
@@ -50,18 +24,6 @@ const NAV = [
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
         <circle cx="9" cy="7" r="4" />
         <path d="M19 8v6M22 11h-6" />
-      </>
-    ),
-  },
-  {
-    to: "/employee-dtr",
-    label: "DTR Form",
-    hint: "CS Form No. 48",
-    desktopOnly: true, // hidden + blocked on mobile
-    icon: (
-      <>
-        <path d="M9 11l3 3L22 4" />
-        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
       </>
     ),
   },
@@ -139,10 +101,7 @@ const MOBILE_CSS = `
 
 export default function App() {
   const { pathname } = useLocation();
-  const dtrBlocked = useDtrBlocked();
   const [menuOpen, setMenuOpen] = useState(false);
-
-  const visibleNav = NAV.filter((n) => !(dtrBlocked && n.desktopOnly));
 
   const isActive = (to) =>
     pathname === to ||
@@ -199,7 +158,7 @@ export default function App() {
         </Link>
 
         <nav className="side-nav">
-          {visibleNav.map((n) => (
+          {NAV.map((n) => (
             <Link
               key={n.to}
               to={n.to}
@@ -240,16 +199,6 @@ export default function App() {
         <Routes>
           <Route path="/register" element={<FaceRegister />} />
           <Route path="/recognize" element={<FaceRecognize />} />
-          <Route
-            path="/employee-dtr"
-            element={
-              dtrBlocked ? (
-                <Navigate to="/recognize" replace />
-              ) : (
-                <EmployeeDtr />
-              )
-            }
-          />
           <Route path="*" element={<FaceRecognize />} />
         </Routes>
       </main>

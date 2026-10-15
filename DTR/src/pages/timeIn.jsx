@@ -11,8 +11,6 @@ import { unlockAudio, playSuccess, playError } from "../../services/sounds";
 import { hapticTick, hapticSuccess, hapticError } from "../../services/haptics";
 
 // ── Per-platform settings ────────────────────────────────────────────────────
-// WEB values are exactly what you had before (web behaviour is unchanged).
-// NATIVE values are tuned for speed in the Android app only.
 const IS_NATIVE = Capacitor.isNativePlatform();
 
 const WEB_CFG = {
@@ -20,21 +18,21 @@ const WEB_CFG = {
   cameraH: 720,
   fps: 30,
   jpegQuality: 0.95,
-  frames: 3, // frames sent to /recognize
-  frameDelayMs: 150, // gap between those frames
-  minFrameMs: 0, // 0 = no throttle on the MediaPipe loop
-  challenges: 2, // liveness challenges required
+  frames: 3,
+  frameDelayMs: 60, 
+  minFrameMs: 0, 
+  captureMaxDim: 640, 
 };
 
 const NATIVE_CFG = {
-  cameraW: 640, // matches the 640px the server downsizes to anyway
+  cameraW: 640, 
   cameraH: 480,
   fps: 30,
   jpegQuality: 0.85,
   frames: 3,
   frameDelayMs: 60,
-  minFrameMs: 50, // ~20 fps cap so slow phones don't queue frames
-  challenges: 1, // set to 2 for stricter liveness (slower)
+  minFrameMs: 50,
+  captureMaxDim: 640,
 };
 
 const CFG = IS_NATIVE ? NATIVE_CFG : WEB_CFG;
@@ -78,7 +76,7 @@ export default function TimeIn() {
     startChallenge,
     resetChallenge,
     processMeshResults,
-  } = useLiveness({ challengesRequired: CFG.challenges });
+  } = useLiveness();
 
   useEffect(() => {
     livenessStateRef.current.ok = livenessOk;
@@ -128,13 +126,20 @@ export default function TimeIn() {
     warmCache();
   }, []);
 
-  // ── Capture a frame as JPEG (camera resolution) ────────────────────────────
+  // ── Capture a frame as JPEG ────────────────────────────────────────────────
+  // The server downsizes to 640px anyway, so sending more only slows the upload.
   const captureImage = () => {
     const video = videoRef.current;
+    const scale = Math.min(
+      1,
+      CFG.captureMaxDim / Math.max(video.videoWidth, video.videoHeight),
+    );
     const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", CFG.jpegQuality);
   };
 
@@ -586,7 +591,7 @@ export default function TimeIn() {
         ? { text: "Live ✓", color: "#16a34a", bg: "rgba(22,163,74,0.12)" }
         : challenge
           ? {
-              text: `Challenge ${challengeProgress.current + 1} of ${challengeProgress.total}`,
+              text: "Blink now",
               color: "#b45309",
               bg: "rgba(245,158,11,0.15)",
             }
@@ -652,13 +657,7 @@ export default function TimeIn() {
                 className={`challenge-banner ${challengeLabel ? "" : "hidden"}`}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 18 }}>
-                    {challenge === "blink"
-                      ? "👁"
-                      : challenge === "turn_left"
-                        ? "←"
-                        : "→"}
-                  </span>
+                  <span style={{ fontSize: 18 }}>👁</span>
                   <span>{challengeLabel ?? "Liveness check"}</span>
                 </div>
                 <div className="challenge-dots">

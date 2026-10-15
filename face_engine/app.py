@@ -29,9 +29,9 @@ RECOGNIZE_MIN_FRAMES = 3
 RECOGNIZE_MAX_FRAMES = 5
 TOLERANCE = 0.5
 
-ENCODE_MAX_DIM = 640      # image size used to compute the 128-d encoding (unchanged)
-DETECT_MAX_DIM = 320      # recognition only: faces are FOUND on a smaller copy (faster)
-EARLY_EXIT_VOTES = 2      # recognition stops once this many frames agree on one person
+ENCODE_MAX_DIM = 640      
+DETECT_MAX_DIM = 320      
+EARLY_EXIT_VOTES = 2      
 
 
 # ── Image decoding ────────────────────────────────────────────────────────────
@@ -107,7 +107,6 @@ def get_face_encoding(image: np.ndarray, fast: bool = False) -> np.ndarray | Non
         detect_img, number_of_times_to_upsample=0, model="hog"
     )
     if not locations:
-        # Face may be small in the frame — one slower retry
         locations = face_recognition.face_locations(
             detect_img, number_of_times_to_upsample=1, model="hog"
         )
@@ -128,8 +127,12 @@ def image_hash(image_data: str) -> str:
     return hashlib.sha256(image_data.encode()).hexdigest()
 
 
-def encode_image_cached(image_data: str, fast: bool = False):
+def encode_image_cached(image_data: str, fast: bool = False, use_cache: bool = True):
     """Cache a single image's encoding by hash. Returns a list or None."""
+    if not use_cache:
+        encoding = get_face_encoding(decode_image(image_data), fast=fast)
+        return encoding.tolist() if encoding is not None else None
+
     key = f"enc:{'f' if fast else 's'}:{image_hash(image_data)}"
     cached = cache.get(key)
 
@@ -176,7 +179,6 @@ def register():
     name = (data.get("name") or "").strip()
     images = data.get("images")
 
-    # Back-compat: allow a single 'image' too, but warn it's suboptimal
     if not images and data.get("image"):
         images = [data.get("image")]
 
@@ -203,16 +205,14 @@ def register():
                      "Please retake with better lighting/framing."
         }), 400
 
-    # Store BOTH: the full set (for majority-vote style recognition) and the
-    # average (cheap single-vector fallback / display purposes).
     avg_encoding = np.mean(np.array(encodings), axis=0).tolist()
 
     log.info("Registered face for '%s' using %d/%d usable frames", name, len(encodings), len(images))
     return jsonify({
         "success": True,
         "name": name,
-        "encodings": encodings,       # list of encodings, one per good frame
-        "encoding": avg_encoding,     # averaged encoding (convenience)
+        "encodings": encodings,       
+        "encoding": avg_encoding,     
         "frames_used": len(encodings),
         "frames_submitted": len(images),
     })
@@ -231,7 +231,7 @@ def recognize():
 
     images = data.get("images")
     if not images and data.get("image"):
-        images = [data.get("image")]  # back-compat
+        images = [data.get("image")] 
 
     known_faces = data.get("known_faces", [])
 
@@ -242,10 +242,12 @@ def recognize():
     if not isinstance(known_faces, list) or not known_faces:
         return jsonify({"error": "Field 'known_faces' must be a non-empty list."}), 422
 
-    # Each known face may have 'encoding' (single vector) or 'encodings' (list).
-    # Normalize to: [{ "name": ..., "encodings": np.ndarray of shape (k, 128) }, ...]
-    normalized_known = []
+    known_blocks = []
+    owner_names = []
     for i, face in enumerate(known_faces):
+        if not isinstance(face, dict):
+            return jsonify({"error": f"known_faces[{i}] must be an object."}), 422
+
         name = face.get("name")
         encs = face.get("encodings") or (
             [face["encoding"]] if isinstance(face.get("encoding"), list) else None
@@ -254,30 +256,43 @@ def recognize():
             return jsonify(
                 {"error": f"known_faces[{i}] is missing 'name' or 'encoding(s)'."}
             ), 422
-        normalized_known.append({"name": name, "encodings": np.array(encs)})
+
+        try:
+            block = np.asarray(encs, dtype=np.float64)
+        except (TypeError, ValueError):
+            block = None
+        if (
+            block is None
+            or block.ndim != 2
+            or block.shape[1] != 128
+            or not np.isfinite(block).all()
+        ):
+            return jsonify(
+                {"error": f"known_faces[{i}] has invalid encodings (expected vectors of 128 numbers)."}
+            ), 422
+
+        known_blocks.append(block)
+        owner_names.extend([name] * len(block))
+
+    known_matrix = np.vstack(known_blocks)
+    known_count = len(known_faces)
     t_norm = time.perf_counter()
 
     # ── Per-frame best match, stopping early once frames agree ────────────────
-    frame_votes = []  # list of (name, best_distance) per processed frame
+    frame_votes = []  
     try:
         for i, img in enumerate(images):
             try:
-                enc = encode_image_cached(img, fast=True)
+                enc = encode_image_cached(img, fast=True, use_cache=False)
             except ValueError as e:
                 log.warning("Skipping frame %d: %s", i, e)
                 continue
             if enc is None:
                 continue
 
-            frame_enc_np = np.array(enc)
-            best_name, best_dist = None, float("inf")
-            for known in normalized_known:
-                dists = face_recognition.face_distance(known["encodings"], frame_enc_np)
-                min_dist = float(np.min(dists))
-                if min_dist < best_dist:
-                    best_dist = min_dist
-                    best_name = known["name"]
-            frame_votes.append((best_name, best_dist))
+            dists = np.linalg.norm(known_matrix - np.asarray(enc), axis=1)
+            best_idx = int(np.argmin(dists))
+            frame_votes.append((owner_names[best_idx], float(dists[best_idx])))
 
             passing_names = [n for n, d in frame_votes if d <= TOLERANCE]
             if len(passing_names) >= EARLY_EXIT_VOTES and len(set(passing_names)) == 1:
@@ -291,7 +306,7 @@ def recognize():
         log.info(
             "TIMING %s | payload=%.0fKB known=%d frames_processed=%d | "
             "parse=%.0fms normalize=%.0fms encode+compare=%.0fms total=%.0fms",
-            result, payload_kb, len(normalized_known), len(frame_votes),
+            result, payload_kb, known_count, len(frame_votes),
             (t_parse - t0) * 1000, (t_norm - t_parse) * 1000,
             (t_done - t_norm) * 1000, (time.perf_counter() - t0) * 1000,
         )
@@ -300,7 +315,6 @@ def recognize():
         log_timing("no-face")
         return jsonify({"error": "No face detected in any of the provided frames."}), 400
 
-    # Majority vote among frames that passed tolerance
     passing_votes = [(n, d) for n, d in frame_votes if d <= TOLERANCE]
 
     if not passing_votes:
@@ -309,7 +323,6 @@ def recognize():
         log_timing("no-match")
         return jsonify({"match": False, "best_distance": round(best_overall[1], 4)})
 
-    # Count votes per name; break ties by lowest average distance
     tally = defaultdict(list)
     for n, d in passing_votes:
         tally[n].append(d)
@@ -356,9 +369,6 @@ def internal_error(_):
 
 
 # ── Keep the models warm ──────────────────────────────────────────────────────
-# After a long idle period the first recognition can be slow because the
-# process's memory was paged out. A tiny dummy run every minute keeps the face
-# models resident, so the first real scan is as fast as the rest.
 import threading
 
 
